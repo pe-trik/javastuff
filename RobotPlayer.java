@@ -1,8 +1,6 @@
-package ourplayer;
+package javastuff;
 
 import battlecode.common.*;
-
-import javax.xml.stream.Location;
 
 public strictfp class RobotPlayer {
 
@@ -25,6 +23,18 @@ public strictfp class RobotPlayer {
             rc.donate(rc.getTeamBullets() - 1000);
     }
 
+
+    static void tryShakeTree() throws GameActionException {
+        TreeInfo[] trees = rc.senseNearbyTrees(rc.getType().bodyRadius +
+                GameConstants.INTERACTION_DIST_FROM_EDGE, Team.NEUTRAL);
+        for (TreeInfo tree : trees) {
+            if (tree.containedBullets > 0 && rc.canShake(tree.getID())) {
+                rc.shake(tree.getID());
+                break;
+            }
+        }
+    }
+
     /**
      * run() is the method that is called when a robot is instantiated in the Battlecode world.
      * If this method returns, the robot dies!
@@ -37,6 +47,8 @@ public strictfp class RobotPlayer {
         RobotPlayer.rc = rc;
         enemyArchonLocations = rc.getInitialArchonLocations(Team.B);
         archons = enemyArchonLocations.length;
+        myTeam = rc.getTeam();
+        enemyTeam = myTeam.opponent();
 
         // Here, we've separated the controls into a different method for each RobotType.
         // You can add the missing ones or rewrite this into your own control structure.
@@ -70,14 +82,13 @@ public strictfp class RobotPlayer {
     static final int ARCHON_LEADER_CHANNEL = 1;
     static final int ARCHON_LEADER_ECHO_CHANNEL = 2;
 
-    static int archonState = 0;
+    static int round;
 
     static void runArchon() throws GameActionException {
         System.out.println("I'm an archon!");
 
         int myID = rc.getID();
         int leaderID;
-        int round;
         int lastLeaderEcho;
 
         // The code you want your robot to perform every round should be in this loop
@@ -126,21 +137,27 @@ public strictfp class RobotPlayer {
     static void archonBuildGardener() throws GameActionException {
         int gw = rc.readBroadcastInt(GARDENER_WORKING_CHANNEL);
 
-        if (gw > 0) {
-
-        }
-    }
-
-    static void tryShakeTree() throws GameActionException {
-        TreeInfo[] trees = rc.senseNearbyTrees(rc.getType().bodyRadius +
-                GameConstants.INTERACTION_DIST_FROM_EDGE, Team.NEUTRAL);
-        for (TreeInfo tree : trees) {
-            if (tree.containedBullets > 0 && rc.canShake(tree.getID())) {
-                rc.shake(tree.getID());
-                break;
+        if (gw + 100 > round) {
+            Direction d = Direction.NORTH;
+            for (int i = 0; i < 36; i++) {
+                if (i % 2 == 0) {
+                    if (rc.canHireGardener(d.rotateLeftDegrees((i >> 2) * 10))) {
+                        rc.hireGardener(d.rotateLeftDegrees((i >> 2) * 10));
+                        break;
+                    }
+                } else if (rc.canHireGardener(d.rotateRightDegrees((i >> 2) * 10))) {
+                    rc.hireGardener(d.rotateLeftDegrees((i >> 2) * 10));
+                    break;
+                }
             }
         }
     }
+
+    /*
+     ********************************************************************************************
+     *                                        GARDENER
+     ********************************************************************************************
+     */
 
     static void runGardener() throws GameActionException {
         System.out.println("I'm a gardener!");
