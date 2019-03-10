@@ -2,6 +2,8 @@ package javastuff;
 
 import battlecode.common.*;
 
+import javax.xml.stream.Location;
+
 public strictfp class RobotPlayer {
 
     static RobotController rc;
@@ -12,6 +14,7 @@ public strictfp class RobotPlayer {
 
     static MapLocation[] enemyArchonLocations;
 
+    static final int DONATION_TRESHOLD = 1500;
 
     static void donate() throws GameActionException {
         float bulletsToWin = rc.getVictoryPointCost() * (GameConstants.VICTORY_POINTS_TO_WIN - rc.getTeamVictoryPoints());
@@ -19,8 +22,8 @@ public strictfp class RobotPlayer {
                 || rc.getRoundNum() + 1 >= rc.getRoundLimit())
             rc.donate(rc.getTeamBullets());
         else if (rc.getRoundNum() > 100
-                && rc.getTeamBullets() > 1000)
-            rc.donate(rc.getTeamBullets() - 1000);
+                && rc.getTeamBullets() > DONATION_TRESHOLD)
+            rc.donate(rc.getTeamBullets() - DONATION_TRESHOLD);
     }
 
 
@@ -65,6 +68,9 @@ public strictfp class RobotPlayer {
             case LUMBERJACK:
                 runLumberjack();
                 break;
+            case TANK:
+                runTank();
+                break;
         }
     }
 
@@ -75,12 +81,15 @@ public strictfp class RobotPlayer {
      */
 
     static int archons = 0;
+    static int gardeners = 0;
+
     static Team myTeam;
     static Team enemyTeam;
 
     static final int ARCHON_LEADER_ECHO = 5;
     static final int ARCHON_LEADER_CHANNEL = 1;
     static final int ARCHON_LEADER_ECHO_CHANNEL = 2;
+    static final int ARCHON_GARDENERS_NUMBER_CHANNEL = 3;
 
     static int round;
 
@@ -91,6 +100,8 @@ public strictfp class RobotPlayer {
         int leaderID;
         int lastLeaderEcho;
 
+        rc.broadcastInt(ARCHON_GARDENERS_NUMBER_CHANNEL, gardeners);
+
         // The code you want your robot to perform every round should be in this loop
         while (true) {
 
@@ -100,6 +111,7 @@ public strictfp class RobotPlayer {
                 leaderID = rc.readBroadcastInt(ARCHON_LEADER_CHANNEL);
                 lastLeaderEcho = rc.readBroadcastInt(ARCHON_LEADER_ECHO_CHANNEL);
                 round = rc.getRoundNum();
+                gardeners = rc.readBroadcastInt(ARCHON_GARDENERS_NUMBER_CHANNEL);
 
                 if (round >= lastLeaderEcho + ARCHON_LEADER_ECHO) {
                     if (leaderID == myID) {
@@ -114,8 +126,9 @@ public strictfp class RobotPlayer {
                 donate();
 
 
-                if (leaderID == myID)
-                    archonBuildGardener();
+                if (leaderID == myID && gardeners < 10)
+                    if (archonBuildGardener())
+                        rc.broadcastInt(ARCHON_GARDENERS_NUMBER_CHANNEL, ++gardeners);
 
 
                 tryMove(randomDirection());
@@ -133,24 +146,42 @@ public strictfp class RobotPlayer {
     }
 
     static final int GARDENER_WORKING_CHANNEL = 10;
+    static final int GARDENER_LOCATION_X_CHANNEL = 11;
+    static final int GARDENER_LOCATION_Y_CHANNEL = 12;
 
-    static void archonBuildGardener() throws GameActionException {
+    static boolean archonBuildGardener() throws GameActionException {
         int gw = rc.readBroadcastInt(GARDENER_WORKING_CHANNEL);
 
-        if (gw + 200 < round) {
+        if (gw + 300 < round || gardeners == 0) {
             Direction d = Direction.NORTH;
             for (int i = 0; i < 36; i++) {
                 if (i % 2 == 0) {
-                    if (rc.canHireGardener(d.rotateLeftDegrees((i >> 2) * 10))) {
-                        rc.hireGardener(d.rotateLeftDegrees((i >> 2) * 10));
-                        break;
+                    if (rc.canHireGardener(d.rotateLeftDegrees((i >> 1) * 10))) {
+                        broadcastGardenerNewLocation();
+                        rc.hireGardener(d.rotateLeftDegrees((i >> 1) * 10));
+                        return true;
                     }
-                } else if (rc.canHireGardener(d.rotateRightDegrees((i >> 2) * 10))) {
-                    rc.hireGardener(d.rotateRightDegrees((i >> 2) * 10));
-                    break;
+                } else if (rc.canHireGardener(d.rotateRightDegrees((i >> 1) * 10))) {
+                    broadcastGardenerNewLocation();
+                    rc.hireGardener(d.rotateRightDegrees((i >> 1) * 10));
+                    return true;
                 }
             }
         }
+
+        return false;
+    }
+
+    static void broadcastGardenerNewLocation() throws GameActionException {
+        MapLocation l = rc.getLocation();
+        for (MapLocation e :
+                enemyArchonLocations)
+            l.add(l.directionTo(e), (float) Math.random() * 10);
+
+        l.add((float) (Math.random() * Math.PI), 10f * (float) Math.random());
+
+        rc.broadcastInt(GARDENER_LOCATION_X_CHANNEL, (int) l.x);
+        rc.broadcastInt(GARDENER_LOCATION_Y_CHANNEL, (int) l.y);
     }
 
     /*
@@ -160,13 +191,23 @@ public strictfp class RobotPlayer {
      */
 
     static final int GARDENER_EARLY_SOLDIER_LIMIT = 300;
+    static final int GARDENER_TANK_TRESHOLD = 600;
+    static final int GARDENER_TANK_COOLDOWN = 200;
+    static final int GARDENER_HALTS_TRESHOLD = 50;
 
     static void runGardener() throws GameActionException {
         System.out.println("I'm a gardener!");
 
         int round = rc.getRoundNum();
+        int lastTank = round;
+        int lastSoldier = round;
+        int tanks = 0;
+        int soldiers = 0;
+        int trees = 0;
+        int halts = 0;
+        boolean inPlace = false;
+        MapLocation destination = new MapLocation(0, 0);
 
-        rc.broadcastInt(GARDENER_WORKING_CHANNEL, round);
 
         while (true) {
 
@@ -174,25 +215,57 @@ public strictfp class RobotPlayer {
 
                 round = rc.getRoundNum();
 
+                if (!inPlace)
+                    destination = new MapLocation(rc.readBroadcastInt(GARDENER_LOCATION_X_CHANNEL),
+                            rc.readBroadcastInt(GARDENER_LOCATION_Y_CHANNEL));
+
                 donate();
 
                 if (round < GARDENER_EARLY_SOLDIER_LIMIT) {
-                    Direction d = Direction.NORTH;
-                    for (int i = 0; i < 36; i++) {
-                        if (i % 2 == 0) {
-                            if (rc.canBuildRobot(RobotType.SOLDIER, d.rotateLeftDegrees((i >> 2) * 10))) {
-                                rc.buildRobot(RobotType.SOLDIER, d.rotateLeftDegrees((i >> 2) * 10));
-                                break;
-                            }
-                        } else if (rc.canBuildRobot(RobotType.SOLDIER, d.rotateRightDegrees((i >> 2) * 10))) {
-                            rc.buildRobot(RobotType.SOLDIER, d.rotateRightDegrees(((i >> 2) * 10)));
-                            break;
-                        }
+                    if (hireRobot(RobotType.SOLDIER)) {
+                        lastSoldier = round;
+                        ++soldiers;
                     }
                 }
 
-                // Move randomly
-                tryMove(randomDirection());
+
+                if (inPlace) {
+
+                    if (trees < 4 && trees < soldiers && plantTree())
+                        ++trees;
+
+                    waterTree();
+
+
+                    if (soldiers >> 1 > tanks &&
+                            lastTank + GARDENER_TANK_COOLDOWN < round
+                            && GARDENER_TANK_TRESHOLD < rc.getTeamBullets()) {
+                        if (hireRobot(RobotType.TANK)) {
+                            lastTank = round;
+                            ++tanks;
+                        }
+                    }
+
+                    if (soldiers >> 1 < trees || trees == 4) {
+                        if (hireRobot(RobotType.SOLDIER)) {
+                            lastSoldier = round;
+                            ++soldiers;
+                        }
+                    }
+
+
+                } else {
+                    if (!tryMove(rc.getLocation().directionTo(destination)) || ++halts > GARDENER_HALTS_TRESHOLD)
+                        inPlace = true;
+                }
+
+
+                if (!inPlace || trees < 2 || soldiers < 2)
+                    rc.broadcastInt(GARDENER_WORKING_CHANNEL, round);
+
+
+                tryShakeTree();
+
 
                 // Clock.yield() makes the robot wait until the next turn, then it will perform this loop again
                 Clock.yield();
@@ -201,6 +274,50 @@ public strictfp class RobotPlayer {
                 System.out.println("Gardener Exception");
                 e.printStackTrace();
             }
+        }
+    }
+
+    static boolean hireRobot(RobotType t) throws GameActionException {
+        Direction d = Direction.NORTH;
+        for (int i = 0; i < 36; i++) {
+            if (i % 2 == 0) {
+                if (rc.canBuildRobot(t, d.rotateLeftDegrees((i >> 1) * 10))) {
+                    rc.buildRobot(t, d.rotateLeftDegrees((i >> 1) * 10));
+                    return true;
+                }
+            } else if (rc.canBuildRobot(t, d.rotateRightDegrees((i >> 1) * 10))) {
+                rc.buildRobot(t, d.rotateRightDegrees(((i >> 1) * 10)));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static boolean plantTree() throws GameActionException {
+        Direction d = Direction.NORTH;
+        for (int i = 0; i < 36; i++) {
+            if (i % 2 == 0) {
+                if (rc.canPlantTree(d.rotateLeftDegrees((i >> 1) * 10))) {
+                    rc.plantTree(d.rotateLeftDegrees((i >> 1) * 10));
+                    return true;
+                }
+            } else if (rc.canPlantTree(d.rotateRightDegrees((i >> 2) * 10))) {
+                rc.plantTree(d.rotateRightDegrees(((i >> 1) * 10)));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static void waterTree() throws GameActionException {
+        TreeInfo[] teamTrees = rc.senseNearbyTrees(GameConstants.BULLET_TREE_RADIUS * 2, myTeam);
+        if (teamTrees.length > 0) {
+            TreeInfo lowestTree = teamTrees[0];
+            for (TreeInfo tree : teamTrees)
+                if (tree.health < lowestTree.health)
+                    lowestTree = tree;
+            if (rc.canWater(lowestTree.getID()))
+                rc.water(lowestTree.getID());
         }
     }
 
@@ -279,6 +396,16 @@ public strictfp class RobotPlayer {
             } catch (Exception e) {
                 System.out.println("Lumberjack Exception");
                 e.printStackTrace();
+            }
+        }
+    }
+
+    static void runTank() throws GameActionException {
+        while (true) {
+            try {
+                tryMove(randomDirection());
+            } catch (GameActionException e) {
+
             }
         }
     }
