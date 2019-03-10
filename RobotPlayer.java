@@ -137,7 +137,7 @@ public strictfp class RobotPlayer {
     static void archonBuildGardener() throws GameActionException {
         int gw = rc.readBroadcastInt(GARDENER_WORKING_CHANNEL);
 
-        if (gw + 100 > round) {
+        if (gw + 200 < round) {
             Direction d = Direction.NORTH;
             for (int i = 0; i < 36; i++) {
                 if (i % 2 == 0) {
@@ -146,7 +146,7 @@ public strictfp class RobotPlayer {
                         break;
                     }
                 } else if (rc.canHireGardener(d.rotateRightDegrees((i >> 2) * 10))) {
-                    rc.hireGardener(d.rotateLeftDegrees((i >> 2) * 10));
+                    rc.hireGardener(d.rotateRightDegrees((i >> 2) * 10));
                     break;
                 }
             }
@@ -159,28 +159,36 @@ public strictfp class RobotPlayer {
      ********************************************************************************************
      */
 
+    static final int GARDENER_EARLY_SOLDIER_LIMIT = 300;
+
     static void runGardener() throws GameActionException {
         System.out.println("I'm a gardener!");
 
-        // The code you want your robot to perform every round should be in this loop
+        int round = rc.getRoundNum();
+
+        rc.broadcastInt(GARDENER_WORKING_CHANNEL, round);
+
         while (true) {
 
-            // Try/catch blocks stop unhandled exceptions, which cause your robot to explode
             try {
 
-                // Listen for home archon's location
-                int xPos = rc.readBroadcast(0);
-                int yPos = rc.readBroadcast(1);
-                MapLocation archonLoc = new MapLocation(xPos, yPos);
+                round = rc.getRoundNum();
 
-                // Generate a random direction
-                Direction dir = randomDirection();
+                donate();
 
-                // Randomly attempt to build a soldier or lumberjack in this direction
-                if (rc.canBuildRobot(RobotType.SOLDIER, dir) && Math.random() < .01) {
-                    rc.buildRobot(RobotType.SOLDIER, dir);
-                } else if (rc.canBuildRobot(RobotType.LUMBERJACK, dir) && Math.random() < .01 && rc.isBuildReady()) {
-                    rc.buildRobot(RobotType.LUMBERJACK, dir);
+                if (round < GARDENER_EARLY_SOLDIER_LIMIT) {
+                    Direction d = Direction.NORTH;
+                    for (int i = 0; i < 36; i++) {
+                        if (i % 2 == 0) {
+                            if (rc.canBuildRobot(RobotType.SOLDIER, d.rotateLeftDegrees((i >> 2) * 10))) {
+                                rc.buildRobot(RobotType.SOLDIER, d.rotateLeftDegrees((i >> 2) * 10));
+                                break;
+                            }
+                        } else if (rc.canBuildRobot(RobotType.SOLDIER, d.rotateRightDegrees((i >> 2) * 10))) {
+                            rc.buildRobot(RobotType.SOLDIER, d.rotateRightDegrees(((i >> 2) * 10)));
+                            break;
+                        }
+                    }
                 }
 
                 // Move randomly
