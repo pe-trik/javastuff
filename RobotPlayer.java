@@ -2,9 +2,28 @@ package ourplayer;
 
 import battlecode.common.*;
 
+import javax.xml.stream.Location;
+
 public strictfp class RobotPlayer {
 
     static RobotController rc;
+
+    /*
+        global
+     */
+
+    static MapLocation[] enemyArchonLocations;
+
+
+    static void donate() throws GameActionException {
+        float bulletsToWin = rc.getVictoryPointCost() * (GameConstants.VICTORY_POINTS_TO_WIN - rc.getTeamVictoryPoints());
+        if (rc.getTeamBullets() > bulletsToWin
+                || rc.getRoundNum() + 1 >= rc.getRoundLimit())
+            rc.donate(rc.getTeamBullets());
+        else if (rc.getRoundNum() > 100
+                && rc.getTeamBullets() > 1000)
+            rc.donate(rc.getTeamBullets() - 1000);
+    }
 
     /**
      * run() is the method that is called when a robot is instantiated in the Battlecode world.
@@ -16,6 +35,8 @@ public strictfp class RobotPlayer {
         // This is the RobotController object. You use it to perform actions from this robot,
         // and to get information on its current status.
         RobotPlayer.rc = rc;
+        enemyArchonLocations = rc.getInitialArchonLocations(Team.B);
+        archons = enemyArchonLocations.length;
 
         // Here, we've separated the controls into a different method for each RobotType.
         // You can add the missing ones or rewrite this into your own control structure.
@@ -36,15 +57,28 @@ public strictfp class RobotPlayer {
     }
 
     /*
-    ********************************************************************************************
-    *                                        ARCHON
-    ********************************************************************************************
+     ********************************************************************************************
+     *                                        ARCHON
+     ********************************************************************************************
      */
+
+    static int archons = 0;
+    static Team myTeam;
+    static Team enemyTeam;
+
+    static final int ARCHON_LEADER_ECHO = 5;
+    static final int ARCHON_LEADER_CHANNEL = 1;
+    static final int ARCHON_LEADER_ECHO_CHANNEL = 2;
 
     static int archonState = 0;
 
     static void runArchon() throws GameActionException {
         System.out.println("I'm an archon!");
+
+        int myID = rc.getID();
+        int leaderID;
+        int round;
+        int lastLeaderEcho;
 
         // The code you want your robot to perform every round should be in this loop
         while (true) {
@@ -52,21 +86,30 @@ public strictfp class RobotPlayer {
             // Try/catch blocks stop unhandled exceptions, which cause your robot to explode
             try {
 
-                // Generate a random direction
-                Direction dir = randomDirection();
+                leaderID = rc.readBroadcastInt(ARCHON_LEADER_CHANNEL);
+                lastLeaderEcho = rc.readBroadcastInt(ARCHON_LEADER_ECHO_CHANNEL);
+                round = rc.getRoundNum();
 
-                // Randomly attempt to build a gardener in this direction
-                if (rc.canHireGardener(dir) && Math.random() < .01) {
-                    rc.hireGardener(dir);
+                if (round >= lastLeaderEcho + ARCHON_LEADER_ECHO) {
+                    if (leaderID == myID) {
+                        rc.broadcastInt(ARCHON_LEADER_ECHO_CHANNEL, round);
+                    } else {
+                        archons--;
+                        rc.broadcastInt(ARCHON_LEADER_ECHO_CHANNEL, round);
+                        rc.broadcastInt(ARCHON_LEADER_CHANNEL, myID);
+                    }
                 }
 
-                // Move randomly
+                donate();
+
+
+                if (leaderID == myID)
+                    archonBuildGardener();
+
+
                 tryMove(randomDirection());
 
-                // Broadcast archon's location for other robots on the team to know
-                MapLocation myLocation = rc.getLocation();
-                rc.broadcast(0,(int)myLocation.x);
-                rc.broadcast(1,(int)myLocation.y);
+                tryShakeTree();
 
                 // Clock.yield() makes the robot wait until the next turn, then it will perform this loop again
                 Clock.yield();
@@ -74,6 +117,27 @@ public strictfp class RobotPlayer {
             } catch (Exception e) {
                 System.out.println("Archon Exception");
                 e.printStackTrace();
+            }
+        }
+    }
+
+    static final int GARDENER_WORKING_CHANNEL = 10;
+
+    static void archonBuildGardener() throws GameActionException {
+        int gw = rc.readBroadcastInt(GARDENER_WORKING_CHANNEL);
+
+        if (gw > 0) {
+
+        }
+    }
+
+    static void tryShakeTree() throws GameActionException {
+        TreeInfo[] trees = rc.senseNearbyTrees(rc.getType().bodyRadius +
+                GameConstants.INTERACTION_DIST_FROM_EDGE, Team.NEUTRAL);
+        for (TreeInfo tree : trees) {
+            if (tree.containedBullets > 0 && rc.canShake(tree.getID())) {
+                rc.shake(tree.getID());
+                break;
             }
         }
     }
@@ -90,7 +154,7 @@ public strictfp class RobotPlayer {
                 // Listen for home archon's location
                 int xPos = rc.readBroadcast(0);
                 int yPos = rc.readBroadcast(1);
-                MapLocation archonLoc = new MapLocation(xPos,yPos);
+                MapLocation archonLoc = new MapLocation(xPos, yPos);
 
                 // Generate a random direction
                 Direction dir = randomDirection();
@@ -162,17 +226,17 @@ public strictfp class RobotPlayer {
             try {
 
                 // See if there are any enemy robots within striking range (distance 1 from lumberjack's radius)
-                RobotInfo[] robots = rc.senseNearbyRobots(RobotType.LUMBERJACK.bodyRadius+GameConstants.LUMBERJACK_STRIKE_RADIUS, enemy);
+                RobotInfo[] robots = rc.senseNearbyRobots(RobotType.LUMBERJACK.bodyRadius + GameConstants.LUMBERJACK_STRIKE_RADIUS, enemy);
 
-                if(robots.length > 0 && !rc.hasAttacked()) {
+                if (robots.length > 0 && !rc.hasAttacked()) {
                     // Use strike() to hit all nearby robots!
                     rc.strike();
                 } else {
                     // No close robots, so search for robots within sight radius
-                    robots = rc.senseNearbyRobots(-1,enemy);
+                    robots = rc.senseNearbyRobots(-1, enemy);
 
                     // If there is a robot, move towards it
-                    if(robots.length > 0) {
+                    if (robots.length > 0) {
                         MapLocation myLocation = rc.getLocation();
                         MapLocation enemyLocation = robots[0].getLocation();
                         Direction toEnemy = myLocation.directionTo(enemyLocation);
@@ -196,10 +260,11 @@ public strictfp class RobotPlayer {
 
     /**
      * Returns a random Direction
+     *
      * @return a random Direction
      */
     static Direction randomDirection() {
-        return new Direction((float)Math.random() * 2 * (float)Math.PI);
+        return new Direction((float) Math.random() * 2 * (float) Math.PI);
     }
 
     /**
@@ -210,14 +275,14 @@ public strictfp class RobotPlayer {
      * @throws GameActionException
      */
     static boolean tryMove(Direction dir) throws GameActionException {
-        return tryMove(dir,20,3);
+        return tryMove(dir, 20, 3);
     }
 
     /**
      * Attempts to move in a given direction, while avoiding small obstacles direction in the path.
      *
-     * @param dir The intended direction of movement
-     * @param degreeOffset Spacing between checked directions (degrees)
+     * @param dir           The intended direction of movement
+     * @param degreeOffset  Spacing between checked directions (degrees)
      * @param checksPerSide Number of extra directions checked on each side, if intended direction was unavailable
      * @return true if a move was performed
      * @throws GameActionException
@@ -234,15 +299,15 @@ public strictfp class RobotPlayer {
         boolean moved = false;
         int currentCheck = 1;
 
-        while(currentCheck<=checksPerSide) {
+        while (currentCheck <= checksPerSide) {
             // Try the offset of the left side
-            if(rc.canMove(dir.rotateLeftDegrees(degreeOffset*currentCheck))) {
-                rc.move(dir.rotateLeftDegrees(degreeOffset*currentCheck));
+            if (rc.canMove(dir.rotateLeftDegrees(degreeOffset * currentCheck))) {
+                rc.move(dir.rotateLeftDegrees(degreeOffset * currentCheck));
                 return true;
             }
             // Try the offset on the right side
-            if(rc.canMove(dir.rotateRightDegrees(degreeOffset*currentCheck))) {
-                rc.move(dir.rotateRightDegrees(degreeOffset*currentCheck));
+            if (rc.canMove(dir.rotateRightDegrees(degreeOffset * currentCheck))) {
+                rc.move(dir.rotateRightDegrees(degreeOffset * currentCheck));
                 return true;
             }
             // No move performed, try slightly further
@@ -273,7 +338,7 @@ public strictfp class RobotPlayer {
         float theta = propagationDirection.radiansBetween(directionToRobot);
 
         // If theta > 90 degrees, then the bullet is traveling away from us and we can break early
-        if (Math.abs(theta) > Math.PI/2) {
+        if (Math.abs(theta) > Math.PI / 2) {
             return false;
         }
 
@@ -281,7 +346,7 @@ public strictfp class RobotPlayer {
         // This is the distance of a line that goes from myLocation and intersects perpendicularly with propagationDirection.
         // This corresponds to the smallest radius circle centered at our location that would intersect with the
         // line that is the path of the bullet.
-        float perpendicularDist = (float)Math.abs(distToRobot * Math.sin(theta)); // soh cah toa :)
+        float perpendicularDist = (float) Math.abs(distToRobot * Math.sin(theta)); // soh cah toa :)
 
         return (perpendicularDist <= rc.getType().bodyRadius);
     }
