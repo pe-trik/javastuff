@@ -2,11 +2,12 @@ package javastuff;
 
 import battlecode.common.*;
 
-import javax.xml.stream.Location;
+import java.util.Random;
 
 public strictfp class RobotPlayer {
 
     static RobotController rc;
+    static Random random = new Random();
 
     /*
         global
@@ -36,6 +37,19 @@ public strictfp class RobotPlayer {
                 break;
             }
         }
+    }
+
+    static Direction toRandomEnemy() throws GameActionException {
+        int i = 0;
+        System.out.println(enemyArchonLocations.length);
+        if (enemyArchonLocations.length > 0)
+            i = random.nextInt(enemyArchonLocations.length);
+        Direction d = rc.getLocation()
+                .directionTo(enemyArchonLocations[i]);
+        if (d != null)
+            return d;
+        else
+            return Direction.EAST;
     }
 
     /**
@@ -92,6 +106,8 @@ public strictfp class RobotPlayer {
     static final int ARCHON_GARDENERS_NUMBER_CHANNEL = 3;
 
     static int round;
+    static int myGardeners = 0;
+    static int randomInitialGardenerDelay = random.nextInt(100) + 50;
 
     static void runArchon() throws GameActionException {
         System.out.println("I'm an archon!");
@@ -100,6 +116,7 @@ public strictfp class RobotPlayer {
         int leaderID;
         int lastLeaderEcho;
 
+        rc.broadcastInt(GARDENER_WORKING_CHANNEL, rc.getRoundNum() - 201);
         rc.broadcastInt(ARCHON_GARDENERS_NUMBER_CHANNEL, gardeners);
 
         // The code you want your robot to perform every round should be in this loop
@@ -108,30 +125,36 @@ public strictfp class RobotPlayer {
             // Try/catch blocks stop unhandled exceptions, which cause your robot to explode
             try {
 
-                leaderID = rc.readBroadcastInt(ARCHON_LEADER_CHANNEL);
-                lastLeaderEcho = rc.readBroadcastInt(ARCHON_LEADER_ECHO_CHANNEL);
-                round = rc.getRoundNum();
-                gardeners = rc.readBroadcastInt(ARCHON_GARDENERS_NUMBER_CHANNEL);
+                if (enemyArchonLocations.length == 1)
+                    leaderID = rc.getID();
+                else {
+                    leaderID = rc.readBroadcastInt(ARCHON_LEADER_CHANNEL);
+                    lastLeaderEcho = rc.readBroadcastInt(ARCHON_LEADER_ECHO_CHANNEL);
+                    round = rc.getRoundNum();
+                    gardeners = rc.readBroadcastInt(ARCHON_GARDENERS_NUMBER_CHANNEL);
 
-                if (round >= lastLeaderEcho + ARCHON_LEADER_ECHO) {
-                    if (leaderID == myID) {
-                        rc.broadcastInt(ARCHON_LEADER_ECHO_CHANNEL, round);
-                    } else {
-                        archons--;
-                        rc.broadcastInt(ARCHON_LEADER_ECHO_CHANNEL, round);
-                        rc.broadcastInt(ARCHON_LEADER_CHANNEL, myID);
+                    if (round >= lastLeaderEcho + ARCHON_LEADER_ECHO) {
+                        if (leaderID == myID) {
+                            rc.broadcastInt(ARCHON_LEADER_ECHO_CHANNEL, round);
+                        } else {
+                            archons--;
+                            rc.broadcastInt(ARCHON_LEADER_ECHO_CHANNEL, round);
+                            rc.broadcastInt(ARCHON_LEADER_CHANNEL, myID);
+                        }
                     }
                 }
 
                 donate();
 
-
-                if (leaderID == myID && gardeners < 10)
-                    if (archonBuildGardener())
+                if (leaderID == myID && gardeners < 10
+                        || randomInitialGardenerDelay < round)
+                    if (archonBuildGardener()) {
+                        ++myGardeners;
                         rc.broadcastInt(ARCHON_GARDENERS_NUMBER_CHANNEL, ++gardeners);
+                    }
 
 
-                tryMove(randomDirection());
+                tryMove(toRandomEnemy().opposite().rotateLeftDegrees(random.nextInt(30)));
 
                 tryShakeTree();
 
@@ -152,18 +175,15 @@ public strictfp class RobotPlayer {
     static boolean archonBuildGardener() throws GameActionException {
         int gw = rc.readBroadcastInt(GARDENER_WORKING_CHANNEL);
 
-        if (gw + 300 < round || gardeners == 0) {
-            Direction d = Direction.NORTH;
-            for (int i = 0; i < 36; i++) {
-                if (i % 2 == 0) {
-                    if (rc.canHireGardener(d.rotateLeftDegrees((i >> 1) * 10))) {
-                        broadcastGardenerNewLocation();
-                        rc.hireGardener(d.rotateLeftDegrees((i >> 1) * 10));
-                        return true;
-                    }
-                } else if (rc.canHireGardener(d.rotateRightDegrees((i >> 1) * 10))) {
+        if (gw + 200 < round
+                || myGardeners < 1) {
+
+            Direction d = toRandomEnemy();
+
+            for (int i = 0; i < 6; i++) {
+                if (rc.canHireGardener(d.rotateLeftDegrees(60 * i))) {
                     broadcastGardenerNewLocation();
-                    rc.hireGardener(d.rotateRightDegrees((i >> 1) * 10));
+                    rc.hireGardener(d.rotateLeftDegrees(60 * i));
                     return true;
                 }
             }
@@ -174,11 +194,9 @@ public strictfp class RobotPlayer {
 
     static void broadcastGardenerNewLocation() throws GameActionException {
         MapLocation l = rc.getLocation();
-        for (MapLocation e :
-                enemyArchonLocations)
-            l.add(l.directionTo(e), (float) Math.random() * 10);
 
-        l.add((float) (Math.random() * Math.PI), 10f * (float) Math.random());
+        for (MapLocation e : enemyArchonLocations)
+            l = l.add(l.directionTo(e), random.nextFloat() * 5);
 
         rc.broadcastInt(GARDENER_LOCATION_X_CHANNEL, (int) l.x);
         rc.broadcastInt(GARDENER_LOCATION_Y_CHANNEL, (int) l.y);
@@ -190,10 +208,17 @@ public strictfp class RobotPlayer {
      ********************************************************************************************
      */
 
-    static final int GARDENER_EARLY_SOLDIER_LIMIT = 300;
-    static final int GARDENER_TANK_TRESHOLD = 600;
+    static final int GARDENER_EARLY_SOLDIER_LIMIT = 200;
+
+    static final float GARDENER_TANK_TRESHOLD = RobotType.TANK.bulletCost * 1.5f;
     static final int GARDENER_TANK_COOLDOWN = 200;
-    static final int GARDENER_HALTS_TRESHOLD = 50;
+
+    static final int GARDENER_SOLDIER_COOLDOWN = 50;
+    static final float GARDENER_SOLDIER_TRESHOLD = RobotType.SOLDIER.bulletCost * 1.3f;
+
+    static final int GARDENER_HALTS_TRESHOLD = 10;
+
+    static Direction gardenerHiringSpot = null;
 
     static void runGardener() throws GameActionException {
         System.out.println("I'm a gardener!");
@@ -221,6 +246,7 @@ public strictfp class RobotPlayer {
 
                 donate();
 
+                //hire more soldiers at the beginning
                 if (round < GARDENER_EARLY_SOLDIER_LIMIT) {
                     if (hireRobot(RobotType.SOLDIER)) {
                         lastSoldier = round;
@@ -231,14 +257,14 @@ public strictfp class RobotPlayer {
 
                 if (inPlace) {
 
-                    if (trees < 4 && trees < soldiers && plantTree())
+                    if (trees < soldiers && plantTree())
                         ++trees;
 
                     waterTree();
 
 
-                    if (soldiers >> 1 > tanks &&
-                            lastTank + GARDENER_TANK_COOLDOWN < round
+                    if (soldiers >> 1 > tanks
+                            && lastTank + GARDENER_TANK_COOLDOWN < round
                             && GARDENER_TANK_TRESHOLD < rc.getTeamBullets()) {
                         if (hireRobot(RobotType.TANK)) {
                             lastTank = round;
@@ -246,7 +272,8 @@ public strictfp class RobotPlayer {
                         }
                     }
 
-                    if (soldiers >> 1 < trees || trees == 4) {
+                    if (lastSoldier + GARDENER_SOLDIER_COOLDOWN < round
+                            && GARDENER_SOLDIER_TRESHOLD < rc.getTeamBullets()) {
                         if (hireRobot(RobotType.SOLDIER)) {
                             lastSoldier = round;
                             ++soldiers;
@@ -255,12 +282,18 @@ public strictfp class RobotPlayer {
 
 
                 } else {
-                    if (!tryMove(rc.getLocation().directionTo(destination)) || ++halts > GARDENER_HALTS_TRESHOLD)
-                        inPlace = true;
+                    if (rc.getLocation().distanceSquaredTo(destination) < 2
+                            || !tryMove(rc.getLocation().directionTo(destination))
+                            || ++halts > GARDENER_HALTS_TRESHOLD) {
+                        if (glade() || rc.getLocation().distanceSquaredTo(destination) < 2)
+                            inPlace = true;
+                        else
+                            destination = rc.getLocation().add(toRandomEnemy(), random.nextFloat() * 2);
+                    }
                 }
 
 
-                if (!inPlace || trees < 2 || soldiers < 2)
+                if (!inPlace)
                     rc.broadcastInt(GARDENER_WORKING_CHANNEL, round);
 
 
@@ -277,8 +310,18 @@ public strictfp class RobotPlayer {
         }
     }
 
+    static boolean glade() throws GameActionException {
+        Direction d = toRandomEnemy();
+        for (int i = 0; i < 6; i++) {
+            d = d.rotateLeftDegrees(60);
+            if (!rc.canPlantTree(d))
+                return false;
+        }
+        return true;
+    }
+
     static boolean hireRobot(RobotType t) throws GameActionException {
-        Direction d = Direction.NORTH;
+        Direction d = toRandomEnemy();
         for (int i = 0; i < 36; i++) {
             if (i % 2 == 0) {
                 if (rc.canBuildRobot(t, d.rotateLeftDegrees((i >> 1) * 10))) {
@@ -294,15 +337,18 @@ public strictfp class RobotPlayer {
     }
 
     static boolean plantTree() throws GameActionException {
-        Direction d = Direction.NORTH;
-        for (int i = 0; i < 36; i++) {
-            if (i % 2 == 0) {
-                if (rc.canPlantTree(d.rotateLeftDegrees((i >> 1) * 10))) {
-                    rc.plantTree(d.rotateLeftDegrees((i >> 1) * 10));
-                    return true;
-                }
-            } else if (rc.canPlantTree(d.rotateRightDegrees((i >> 2) * 10))) {
-                rc.plantTree(d.rotateRightDegrees(((i >> 1) * 10)));
+        Direction d = toRandomEnemy();
+        for (int i = 0; i < 6; i++) {
+            if (i % 2 == 0)
+                d = d.rotateLeftDegrees(60 * (i + 1));
+            else
+                d = d.rotateLeftDegrees(60 * (i + 1));
+            if (gardenerHiringSpot == null) {
+                if (rc.canPlantTree(d.rotateRightDegrees(180)))
+                    gardenerHiringSpot = d.rotateRightDegrees(180);
+            } else if (!gardenerHiringSpot.equals(d, 0.001f)
+                    && rc.canPlantTree(d)) {
+                rc.plantTree(d);
                 return true;
             }
         }
