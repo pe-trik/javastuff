@@ -2,9 +2,7 @@ package javastuff;
 
 import battlecode.common.*;
 
-import java.awt.*;
 import java.util.Arrays;
-import java.util.Map;
 import java.util.Random;
 
 
@@ -18,8 +16,8 @@ public strictfp class RobotPlayer {
      */
 
     static MapLocation[] enemyArchonLocations;
-
-    static final int DONATION_TRESHOLD = 1500;
+    static float bullets = 0;
+    static final int DONATION_TRESHOLD = 1000;
 
     static void donate() throws GameActionException {
         float bulletsToWin = rc.getVictoryPointCost() * (GameConstants.VICTORY_POINTS_TO_WIN - rc.getTeamVictoryPoints());
@@ -38,7 +36,6 @@ public strictfp class RobotPlayer {
         for (TreeInfo tree : trees) {
             if (tree.containedBullets > 0 && rc.canShake(tree.getID())) {
                 rc.shake(tree.getID());
-                break;
             }
         }
     }
@@ -99,70 +96,41 @@ public strictfp class RobotPlayer {
      */
 
     static int archons = 0;
-    static int gardeners = 0;
-
     static Team myTeam;
     static Team enemyTeam;
 
     static final int ARCHON_LEADER_ECHO = 5;
+
     static final int ARCHON_LEADER_CHANNEL = 1;
     static final int ARCHON_LEADER_ECHO_CHANNEL = 2;
-    static final int ARCHON_GARDENERS_NUMBER_CHANNEL = 3;
+    static final int GARDENERS_CHANNEL = 3;
+    static final int GARDENERS_DEMAND_CHANNEL = 4;
 
     static int round;
-    static int myGardeners = 0;
-    static int randomInitialGardenerDelay = random.nextInt(100) + 50;
+    static int leaderID = -1;
+    static int lastLeaderEcho;
 
     static void runArchon() throws GameActionException {
-        System.out.println("I'm an archon!");
 
         int myID = rc.getID();
-        int leaderID;
-        int lastLeaderEcho;
 
-        rc.broadcastInt(GARDENER_WORKING_CHANNEL, rc.getRoundNum() - 201);
-        rc.broadcastInt(ARCHON_GARDENERS_NUMBER_CHANNEL, gardeners);
-
-        // The code you want your robot to perform every round should be in this loop
         while (true) {
 
-            // Try/catch blocks stop unhandled exceptions, which cause your robot to explode
             try {
-
-                if (enemyArchonLocations.length == 1)
-                    leaderID = rc.getID();
-                else {
-                    leaderID = rc.readBroadcastInt(ARCHON_LEADER_CHANNEL);
-                    lastLeaderEcho = rc.readBroadcastInt(ARCHON_LEADER_ECHO_CHANNEL);
-                    round = rc.getRoundNum();
-                    gardeners = rc.readBroadcastInt(ARCHON_GARDENERS_NUMBER_CHANNEL);
-
-                    if (round >= lastLeaderEcho + ARCHON_LEADER_ECHO) {
-                        if (leaderID == myID) {
-                            rc.broadcastInt(ARCHON_LEADER_ECHO_CHANNEL, round);
-                        } else {
-                            archons--;
-                            rc.broadcastInt(ARCHON_LEADER_ECHO_CHANNEL, round);
-                            rc.broadcastInt(ARCHON_LEADER_CHANNEL, myID);
-                        }
-                    }
-                }
 
                 donate();
 
-                if (leaderID == myID && gardeners < 10
-                        || randomInitialGardenerDelay < round)
-                    if (archonBuildGardener()) {
-                        ++myGardeners;
-                        rc.broadcastInt(ARCHON_GARDENERS_NUMBER_CHANNEL, ++gardeners);
-                    }
+                archonLeaderManagement(myID);
 
-
-                tryMove(toRandomEnemy().opposite().rotateLeftDegrees(random.nextInt(30)));
+                if (leaderID == myID) {
+                    evaluateUnitsDemands();
+                    archonBuildGardener();
+                }
 
                 tryShakeTree();
 
-                // Clock.yield() makes the robot wait until the next turn, then it will perform this loop again
+                tryMove(randomDirection());
+
                 Clock.yield();
 
             } catch (Exception e) {
@@ -172,40 +140,60 @@ public strictfp class RobotPlayer {
         }
     }
 
-    static final int GARDENER_WORKING_CHANNEL = 10;
-    static final int GARDENER_LOCATION_X_CHANNEL = 11;
-    static final int GARDENER_LOCATION_Y_CHANNEL = 12;
+    private static void archonLeaderManagement(int myID) throws GameActionException {
+        leaderID = rc.readBroadcastInt(ARCHON_LEADER_CHANNEL);
+        lastLeaderEcho = rc.readBroadcastInt(ARCHON_LEADER_ECHO_CHANNEL);
+        round = rc.getRoundNum();
 
-    static boolean archonBuildGardener() throws GameActionException {
-        int gw = rc.readBroadcastInt(GARDENER_WORKING_CHANNEL);
+        if (round >= lastLeaderEcho + ARCHON_LEADER_ECHO) {
+            if (leaderID == myID) {
+                rc.broadcastInt(ARCHON_LEADER_ECHO_CHANNEL, round);
+            } else {
+                archons--;
+                rc.broadcastInt(ARCHON_LEADER_ECHO_CHANNEL, round);
+                rc.broadcastInt(ARCHON_LEADER_CHANNEL, myID);
+            }
+        }
+    }
 
-        if (gw + 200 < round
-                || myGardeners < 1) {
+    static void archonBuildGardener() throws GameActionException {
+        int g = rc.readBroadcastInt(GARDENERS_CHANNEL);
+        int gd = rc.readBroadcastInt(GARDENERS_DEMAND_CHANNEL);
 
+        if (g == 0 || gd > 0) {
             Direction d = toRandomEnemy();
-
             for (int i = 0; i < 6; i++) {
-                if (rc.canHireGardener(d.rotateLeftDegrees(60 * i))) {
-                    broadcastGardenerNewLocation();
-                    rc.hireGardener(d.rotateLeftDegrees(60 * i));
-                    return true;
+                if (i % 2 == 0)
+                    d = d.rotateLeftDegrees(60 * (i + 1));
+                else
+                    d = d.rotateRightDegrees(60 * (i + 1));
+                if (rc.canHireGardener(d)) {
+                    rc.broadcastInt(GARDENERS_DEMAND_CHANNEL, --gd);
+                    rc.broadcastInt(GARDENERS_CHANNEL, ++g);
+                    rc.hireGardener(d);
+                    return;
                 }
             }
         }
-
-        return false;
     }
 
-    static void broadcastGardenerNewLocation() throws GameActionException {
-        MapLocation l = rc.getLocation();
+    static final int EARLY_GAME_LIMIT = 3000;
 
-        for (MapLocation e : enemyArchonLocations)
-            l = l.add(l.directionTo(e), random.nextFloat() * 2);
+    static void evaluateUnitsDemands() throws GameActionException {
+        if (rc.getRoundNum() < EARLY_GAME_LIMIT) {
+            int trees = rc.readBroadcast(TREE_CHANNEL);
+            int soldiers = rc.readBroadcast(SOLDIER_CHANNEL);
+            int gardeners = rc.readBroadcastInt(GARDENERS_CHANNEL);
 
 
+            rc.broadcastInt(TREE_DEMAND_CHANNEL, 1);
+            if (soldiers < trees)
+                rc.broadcastInt(SOLDIER_DEMAND_CHANNEL, 1);
 
-        rc.broadcastInt(GARDENER_LOCATION_X_CHANNEL, (int) l.x);
-        rc.broadcastInt(GARDENER_LOCATION_Y_CHANNEL, (int) l.y);
+            if (gardeners == 0
+                    || trees >= gardeners * 2)
+                rc.broadcastInt(GARDENERS_DEMAND_CHANNEL, 1);
+        }
     }
 
     /*
@@ -214,97 +202,70 @@ public strictfp class RobotPlayer {
      ********************************************************************************************
      */
 
-    static final int GARDENER_EARLY_SOLDIER_LIMIT = 300;
+    static final int GARDENERS_SPOTS_CHANNEL = 70;
 
-    static final float GARDENER_TANK_TRESHOLD = RobotType.TANK.bulletCost * 1.5f;
-    static final int GARDENER_TANK_COOLDOWN = 200;
+    static final int SOLDIER_CHANNEL = 5;
+    static final int SOLDIER_DEMAND_CHANNEL = 6;
 
-    static final int GARDENER_SOLDIER_COOLDOWN = 50;
-    static final float GARDENER_SOLDIER_TRESHOLD = RobotType.SOLDIER.bulletCost * 1.3f;
+    static final int TANK_CHANNEL = 7;
+    static final int TANK_DEMAND_CHANNEL = 8;
 
-    static final int GARDENER_HALTS_TRESHOLD = 10;
+    static final int SCOUT_CHANNEL = 9;
+    static final int SCOUT_DEMAND_CHANNEL = 10;
+
+    static final int LUMBERJACK_CHANNEL = 11;
+    static final int LUMBERJACK_DEMAND_CHANNEL = 12;
+
+    static final int TREE_CHANNEL = 13;
+    static final int TREE_DEMAND_CHANNEL = 14;
 
     static Direction gardenerHiringSpot = null;
+    static int myLivingTrees = 0;
+    static int myPlantedTress = 0;
+    static boolean inPlace = false;
 
     static void runGardener() throws GameActionException {
-        System.out.println("I'm a gardener!");
 
-        int round = rc.getRoundNum();
-        int lastTank = round;
-        int lastSoldier = round;
-        int tanks = 0;
-        int soldiers = 0;
-        int trees = 0;
-        int halts = 0;
-        boolean inPlace = false;
-        MapLocation destination = new MapLocation(0, 0);
-
+        boolean deceased = false;
+        int movements = 0;
+        MapLocation destination = getGardenerSpot();
 
         while (true) {
 
             try {
 
                 round = rc.getRoundNum();
-
-                if (!inPlace)
-                    destination = new MapLocation(rc.readBroadcastInt(GARDENER_LOCATION_X_CHANNEL),
-                            rc.readBroadcastInt(GARDENER_LOCATION_Y_CHANNEL));
+                bullets = rc.getTeamBullets();
 
                 donate();
 
-                //hire more soldiers at the beginning
-                if (round < GARDENER_EARLY_SOLDIER_LIMIT) {
-                    if (hireRobot(RobotType.SOLDIER)) {
-                        lastSoldier = round;
-                        ++soldiers;
-                    }
-                }
-
-
                 if (inPlace) {
 
-                    if (trees < soldiers && plantTree())
-                        ++trees;
+                    plantTree();
 
-                    waterTree();
+                    waterTrees();
 
-
-                    if (soldiers >> 1 > tanks
-                            && lastTank + GARDENER_TANK_COOLDOWN < round
-                            && GARDENER_TANK_TRESHOLD < rc.getTeamBullets()) {
-                        if (hireRobot(RobotType.TANK)) {
-                            lastTank = round;
-                            ++tanks;
-                        }
-                    }
-
-                    if (lastSoldier + GARDENER_SOLDIER_COOLDOWN < round
-                            && GARDENER_SOLDIER_TRESHOLD < rc.getTeamBullets()) {
-                        if (hireRobot(RobotType.SOLDIER)) {
-                            lastSoldier = round;
-                            ++soldiers;
-                        }
-                    }
-
+                    hireUnits();
 
                 } else {
-                    if (rc.getLocation().distanceSquaredTo(destination) < 2
-                            || !tryMove(rc.getLocation().directionTo(destination))
-                            || ++halts > GARDENER_HALTS_TRESHOLD) {
-                        if (glade() || rc.getLocation().distanceSquaredTo(destination) < 2)
-                            inPlace = true;
-                        else
-                            destination = rc.getLocation().add(toRandomEnemy(), random.nextFloat() * 2);
-                    }
+                    if (glade() || ++movements > 10) {
+                        inPlace = true;
+
+                        int g = rc.readBroadcastInt(GARDENERS_CHANNEL);
+                        rc.broadcastInt(GARDENERS_SPOTS_CHANNEL + 2 * g, (int) rc.getLocation().x);
+                        rc.broadcastInt(GARDENERS_SPOTS_CHANNEL + 2 * g + 1, (int) rc.getLocation().y);
+                    } else
+                        tryMove(rc.getLocation().directionTo(destination));
                 }
-
-
-                if (!inPlace)
-                    rc.broadcastInt(GARDENER_WORKING_CHANNEL, round);
 
 
                 tryShakeTree();
 
+                if(!deceased && rc.getHealth() * 2 < RobotType.GARDENER.maxHealth){
+                    deceased = true;
+                    rc.broadcastInt(GARDENERS_CHANNEL, rc.readBroadcastInt(GARDENERS_CHANNEL) - 1);
+                    evaluateUnitsDemands();
+                }
 
                 // Clock.yield() makes the robot wait until the next turn, then it will perform this loop again
                 Clock.yield();
@@ -316,6 +277,65 @@ public strictfp class RobotPlayer {
         }
     }
 
+    static MapLocation getGardenerSpot() throws GameActionException {
+        MapLocation l = rc.getLocation().add(toRandomEnemy(), 2);
+        for (int i = GARDENERS_SPOTS_CHANNEL; i < GameConstants.BROADCAST_MAX_CHANNELS - 1; i++) {
+            int x = rc.readBroadcastInt(i);
+            int y = rc.readBroadcastInt(++i);
+            if (x == 0 && y == 0)
+                break;
+            if ((l.x - x) * (l.x - x) + (l.y - y) * (l.y - y) > 3)
+                continue;
+            l = l.add(l.directionTo(new MapLocation(x, y)).opposite(), 5);
+        }
+        return l;
+    }
+
+    static void hireUnits() throws GameActionException {
+
+        if (hireUnit(RobotType.SOLDIER))
+            return;
+
+        if (hireUnit(RobotType.TANK))
+            return;
+
+        if (hireUnit(RobotType.SCOUT))
+            return;
+
+        if (hireUnit(RobotType.LUMBERJACK))
+            return;
+
+    }
+
+    static boolean hireUnit(RobotType t) throws GameActionException {
+        int cchannel = 0;
+        switch (t) {
+            case TANK:
+                cchannel = TANK_CHANNEL;
+                break;
+            case SCOUT:
+                cchannel = SCOUT_CHANNEL;
+                break;
+            case SOLDIER:
+                cchannel = SOLDIER_CHANNEL;
+                break;
+            case LUMBERJACK:
+                cchannel = LUMBERJACK_CHANNEL;
+                break;
+        }
+        int dchannel = cchannel + 1;
+        int ud = rc.readBroadcast(dchannel);
+        if (ud > 0 && t.bulletCost * 1.5f < bullets) {
+            int u = rc.readBroadcast(cchannel);
+            if (hireRobot(t)) {
+                rc.broadcastInt(dchannel, --ud);
+                rc.broadcastInt(cchannel, ++u);
+                evaluateUnitsDemands();
+                return true;
+            }
+        }
+        return false;
+    }
 
     static boolean glade() throws GameActionException {
         Direction d = toRandomEnemy();
@@ -328,6 +348,12 @@ public strictfp class RobotPlayer {
     }
 
     static boolean hireRobot(RobotType t) throws GameActionException {
+        if (gardenerHiringSpot != null) {
+            if (rc.canBuildRobot(t, gardenerHiringSpot)) {
+                rc.buildRobot(t, gardenerHiringSpot);
+                return true;
+            }
+        }
         Direction d = toRandomEnemy();
         for (int i = 0; i < 36; i++) {
             if (i % 2 == 0) {
@@ -343,27 +369,44 @@ public strictfp class RobotPlayer {
         return false;
     }
 
-    static boolean plantTree() throws GameActionException {
+    static void plantTree() throws GameActionException {
+        if (myLivingTrees >= 6
+                || GameConstants.BULLET_TREE_COST * 1.3f > bullets)
+            return;
+
+        int td = rc.readBroadcast(TREE_DEMAND_CHANNEL);
+        if (td == 0)
+            return;
+
         Direction d = toRandomEnemy();
         for (int i = 0; i < 6; i++) {
             if (i % 2 == 0)
                 d = d.rotateLeftDegrees(60 * (i + 1));
             else
-                d = d.rotateLeftDegrees(60 * (i + 1));
+                d = d.rotateRightDegrees(60 * (i + 1));
             if (gardenerHiringSpot == null) {
                 if (rc.canPlantTree(d.rotateRightDegrees(180)))
                     gardenerHiringSpot = d.rotateRightDegrees(180);
             } else if (!gardenerHiringSpot.equals(d, 0.001f)
                     && rc.canPlantTree(d)) {
+                rc.broadcastInt(TREE_DEMAND_CHANNEL, --td);
+                rc.broadcastInt(TREE_CHANNEL, 1 + rc.readBroadcast(TREE_CHANNEL));
                 rc.plantTree(d);
-                return true;
+                ++myPlantedTress;
+                evaluateUnitsDemands();
+                return;
             }
         }
-        return false;
     }
 
-    static void waterTree() throws GameActionException {
+    static void waterTrees() throws GameActionException {
         TreeInfo[] teamTrees = rc.senseNearbyTrees(GameConstants.BULLET_TREE_RADIUS * 2, myTeam);
+        myLivingTrees = teamTrees.length;
+        //detect dead trees
+        if(myPlantedTress > myLivingTrees){
+            rc.broadcastInt(TREE_CHANNEL, rc.readBroadcastInt(TREE_CHANNEL) - myPlantedTress + myLivingTrees);
+            myPlantedTress = myLivingTrees;
+        }
         if (teamTrees.length > 0) {
             TreeInfo lowestTree = teamTrees[0];
             for (TreeInfo tree : teamTrees)
@@ -374,6 +417,7 @@ public strictfp class RobotPlayer {
         }
     }
 
+
     /*
      ********************************************************************************************
      *                                        SOLDIER
@@ -381,6 +425,7 @@ public strictfp class RobotPlayer {
      */
     static MapLocation myLocation;
     static final int SOLDIER_MIN_CHANEL = 20;
+
     static void runSoldier() throws GameActionException {
         System.out.println("I'm an soldier!");
         Team enemy = rc.getTeam().opponent();
@@ -388,6 +433,7 @@ public strictfp class RobotPlayer {
         MapLocation lastLockedEnemyLocation = lockedEnemyLocation;
         boolean attack = false;
         mLine line = null;
+        boolean deceased = false;
 
         // The code you want your robot to perform every round should be in this loop
         while (true) {
@@ -406,8 +452,7 @@ public strictfp class RobotPlayer {
 
                 //lock to an enemy
                 //if there are enemies nearby, choose on of them
-                if (robots.length > 0)
-                {
+                if (robots.length > 0) {
                     lockedEnemyLocation = findBiggestPriority(robots);
                     attack = true;
                 }
@@ -421,12 +466,11 @@ public strictfp class RobotPlayer {
                 System.out.println(lockedEnemyLocation);
 
                 //check if we changed the enemy location - change mLine for navigation
-                if (lastLockedEnemyLocation != lockedEnemyLocation)
-                {
+                if (lastLockedEnemyLocation != lockedEnemyLocation) {
                     line = new mLine(myLocation.directionTo(lockedEnemyLocation),
                             myLocation,
                             lockedEnemyLocation);
-                    rc.setIndicatorLine(line.begin,line.end,0,0,0);
+                    rc.setIndicatorLine(line.begin, line.end, 0, 0, 0);
                 }
 
                 // attack
@@ -437,7 +481,7 @@ public strictfp class RobotPlayer {
                     rc.broadcastFloat(SOLDIER_MIN_CHANEL + 2, lockedEnemyLocation.y);
 
                     if (!dodge())
-                        navigateTo(lockedEnemyLocation,line);
+                        navigateTo(lockedEnemyLocation, line);
                     //we are either attacking and dodging or navigating to enemy
                     if (attack) {
                         //try consecutively pentad/triad/single shots
@@ -449,9 +493,14 @@ public strictfp class RobotPlayer {
                             rc.fireSingleShot(myLocation.directionTo(lockedEnemyLocation));
                         }
                     }
-                }
-                else
+                } else
                     tryMove(randomDirection());
+
+                if(!deceased && rc.getHealth() * 2 < RobotType.SOLDIER.maxHealth){
+                    deceased = true;
+                    rc.broadcastInt(SOLDIER_CHANNEL, rc.readBroadcastInt(SOLDIER_CHANNEL) - 1);
+                    evaluateUnitsDemands();
+                }
 
                 // Clock.yield() makes the robot wait until the next turn, then it will perform this loop again
                 Clock.yield();
@@ -496,8 +545,7 @@ public strictfp class RobotPlayer {
     }
 
     //computes if the bullets going towards me are critically close
-    static boolean dodge() throws GameActionException
-    {
+    static boolean dodge() throws GameActionException {
         RobotType currentType = rc.getType();
         MapLocation currentDestination = rc.getLocation();
         BulletInfo[] bullets = rc.senseNearbyBullets();
@@ -508,19 +556,18 @@ public strictfp class RobotPlayer {
             return false;
         //compute for each bullet a distance between the direction vector of the bullet and the center of the robot
         //add to the robots destination location necessary direction and distance to dodge the bullet
-        for (BulletInfo bullet : bullets)
-        {
+        for (BulletInfo bullet : bullets) {
             //get where the bullet ends this turn
-            MapLocation bulletDest = bullet.location.add(bullet.dir,bullet.speed);
+            MapLocation bulletDest = bullet.location.add(bullet.dir, bullet.speed);
             //direction vector
-            float Sx = bulletDest.x -  bullet.location.x;
+            float Sx = bulletDest.x - bullet.location.x;
             float Sy = bulletDest.y - bullet.location.y;
 
             //equation constant
             float c = bullet.location.x * Sy - Sx * bullet.location.y;
 
             //distance from bullet direction to center of the robot
-            float vectorToCenterDistance = (-Sy * myLocation.x + Sx * myLocation.y + c)/(float)Math.sqrt(Math.pow(Sy,2)+Math.pow(Sx,2));
+            float vectorToCenterDistance = (-Sy * myLocation.x + Sx * myLocation.y + c) / (float) Math.sqrt(Math.pow(Sy, 2) + Math.pow(Sx, 2));
 
             //distance necessary to move to dodge the bullet
             float moveDistance = currentType.bodyRadius - vectorToCenterDistance;
@@ -530,11 +577,10 @@ public strictfp class RobotPlayer {
             if (bullet.dir.degreesBetween(bullet.location.directionTo(currentDestination)) <= 0)
                 direction = bullet.dir.rotateRightDegrees(90);
 
-            currentDestination.add(direction,moveDistance);
+            currentDestination.add(direction, moveDistance);
         }
         //move away from lumberjacks
-        for (RobotInfo lumberjack : lumberjacks)
-        {
+        for (RobotInfo lumberjack : lumberjacks) {
             currentDestination.add(currentDestination.directionTo(lumberjack.location).opposite(),
                     lumberjack.getRadius() + rc.getType().bodyRadius);
         }
@@ -646,37 +692,34 @@ public strictfp class RobotPlayer {
         return false;
     }
 
-    static public class mLine
-    {
-        public mLine(Direction dir, MapLocation begin, MapLocation end)
-        {
+    static public class mLine {
+        public mLine(Direction dir, MapLocation begin, MapLocation end) {
             this.begin = begin;
             this.dir = dir;
             this.end = end;
         }
+
         Direction dir;
         MapLocation begin;
         MapLocation end;
     }
 
     static Direction lastDir;
-    static void navigateTo(MapLocation destination, mLine line) throws GameActionException
-    {
+
+    static void navigateTo(MapLocation destination, mLine line) throws GameActionException {
         if (line == null) return;
 
         // calculate general form of the mline ax + by + c = 0
         float a = -(line.end.y - line.begin.y); // direction in y coordinate
         float b = line.end.x - line.begin.x; // direction in x coordinate
-        float c = - a*line.begin.x - b*line.begin.y;
+        float c = -a * line.begin.x - b * line.begin.y;
 
         // calculate our distance from the mline
-        float distance = (a * myLocation.x + b * myLocation.y + c)/(float)(Math.sqrt(a*a+b*b));
+        float distance = (a * myLocation.x + b * myLocation.y + c) / (float) (Math.sqrt(a * a + b * b));
 
         // follow the mline
-        if (distance < rc.getType().bodyRadius / 2)
-        {
-            if (rc.canMove(line.dir, rc.getType().strideRadius))
-            {
+        if (distance < rc.getType().bodyRadius / 2) {
+            if (rc.canMove(line.dir, rc.getType().strideRadius)) {
                 rc.move(line.dir, rc.getType().strideRadius);
                 lastDir = line.dir;
                 return;
@@ -688,34 +731,28 @@ public strictfp class RobotPlayer {
         boolean firstFound = false;
         // could not follow the m-line, follow obstacle
         //find possible
-        for (int i = 0; i < 360; i++)
-        {
+        for (int i = 0; i < 360; i++) {
             Direction current = line.dir.rotateLeftDegrees(i);
 
-            if (!firstFound && rc.canMove(current))
-            {
+            if (!firstFound && rc.canMove(current)) {
                 firstPossible = current;
                 firstFound = true;
-            }
-            else if(!rc.canMove(current) && firstFound)
-            {
+            } else if (!rc.canMove(current) && firstFound) {
                 secondPossible = current.rotateRightDegrees(1);
                 break;
             }
         }
 
         //choose possibility and move that way
-        if (firstPossible == null || lastDir == firstPossible.opposite())
-        {
+        if (firstPossible == null || lastDir == firstPossible.opposite()) {
             rc.move(secondPossible);
             lastDir = secondPossible;
-        }
-        else
-        {
+        } else {
             rc.move(firstPossible);
             lastDir = secondPossible;
         }
     }
+
     /**
      * A slightly more complicated example function, this returns true if the given bullet is on a collision
      * course with the current robot. Doesn't take into account objects between the bullet and this robot.
