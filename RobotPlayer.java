@@ -66,7 +66,7 @@ public strictfp class RobotPlayer {
         // This is the RobotController object. You use it to perform actions from this robot,
         // and to get information on its current status.
         RobotPlayer.rc = rc;
-        enemyArchonLocations = rc.getInitialArchonLocations(Team.B);
+        enemyArchonLocations = rc.getInitialArchonLocations(rc.getTeam().opponent());
         archons = enemyArchonLocations.length;
         myTeam = rc.getTeam();
         enemyTeam = myTeam.opponent();
@@ -200,7 +200,9 @@ public strictfp class RobotPlayer {
         MapLocation l = rc.getLocation();
 
         for (MapLocation e : enemyArchonLocations)
-            l = l.add(l.directionTo(e), random.nextFloat() * 5);
+            l = l.add(l.directionTo(e), random.nextFloat() * 2);
+
+
 
         rc.broadcastInt(GARDENER_LOCATION_X_CHANNEL, (int) l.x);
         rc.broadcastInt(GARDENER_LOCATION_Y_CHANNEL, (int) l.y);
@@ -212,7 +214,7 @@ public strictfp class RobotPlayer {
      ********************************************************************************************
      */
 
-    static final int GARDENER_EARLY_SOLDIER_LIMIT = 200;
+    static final int GARDENER_EARLY_SOLDIER_LIMIT = 300;
 
     static final float GARDENER_TANK_TRESHOLD = RobotType.TANK.bulletCost * 1.5f;
     static final int GARDENER_TANK_COOLDOWN = 200;
