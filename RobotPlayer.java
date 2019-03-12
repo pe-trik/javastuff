@@ -2,7 +2,11 @@ package javastuff;
 
 import battlecode.common.*;
 
+import java.awt.*;
+import java.util.Arrays;
+import java.util.Map;
 import java.util.Random;
+
 
 public strictfp class RobotPlayer {
 
@@ -83,7 +87,7 @@ public strictfp class RobotPlayer {
                 runLumberjack();
                 break;
             case TANK:
-                runTank();
+                runSoldier();
                 break;
         }
     }
@@ -310,6 +314,7 @@ public strictfp class RobotPlayer {
         }
     }
 
+
     static boolean glade() throws GameActionException {
         Direction d = toRandomEnemy();
         for (int i = 0; i < 6; i++) {
@@ -367,31 +372,84 @@ public strictfp class RobotPlayer {
         }
     }
 
+    /*
+     ********************************************************************************************
+     *                                        SOLDIER
+     ********************************************************************************************
+     */
+    static MapLocation myLocation;
+    static final int SOLDIER_MIN_CHANEL = 20;
     static void runSoldier() throws GameActionException {
         System.out.println("I'm an soldier!");
         Team enemy = rc.getTeam().opponent();
+        MapLocation lockedEnemyLocation = null;
+        MapLocation lastLockedEnemyLocation = lockedEnemyLocation;
+        boolean attack = false;
+        mLine line = null;
 
         // The code you want your robot to perform every round should be in this loop
         while (true) {
 
             // Try/catch blocks stop unhandled exceptions, which cause your robot to explode
             try {
-                MapLocation myLocation = rc.getLocation();
+
+                attack = false;
+                myLocation = rc.getLocation();
+
+                lastLockedEnemyLocation = lockedEnemyLocation;
+                lockedEnemyLocation = null;
 
                 // See if there are any nearby enemy robots
                 RobotInfo[] robots = rc.senseNearbyRobots(-1, enemy);
 
-                // If there are some...
-                if (robots.length > 0) {
-                    // And we have enough bullets, and haven't attacked yet this turn...
-                    if (rc.canFireSingleShot()) {
-                        // ...Then fire a bullet in the direction of the enemy.
-                        rc.fireSingleShot(rc.getLocation().directionTo(robots[0].location));
-                    }
+                //lock to an enemy
+                //if there are enemies nearby, choose on of them
+                if (robots.length > 0)
+                {
+                    lockedEnemyLocation = findBiggestPriority(robots);
+                    attack = true;
+                }
+                //else listen if someone reported enemies locations
+                else if (rc.readBroadcastInt(SOLDIER_MIN_CHANEL) != 0)
+                    lockedEnemyLocation = new MapLocation(rc.readBroadcastFloat(SOLDIER_MIN_CHANEL + 1), rc.readBroadcastFloat(SOLDIER_MIN_CHANEL + 2));
+                    //look at enemy archons locations
+                else if (enemyArchonLocations.length > 0)
+                    lockedEnemyLocation = enemyArchonLocations[0];
+
+                System.out.println(lockedEnemyLocation);
+
+                //check if we changed the enemy location - change mLine for navigation
+                if (lastLockedEnemyLocation != lockedEnemyLocation)
+                {
+                    line = new mLine(myLocation.directionTo(lockedEnemyLocation),
+                            myLocation,
+                            lockedEnemyLocation);
+                    rc.setIndicatorLine(line.begin,line.end,0,0,0);
                 }
 
-                // Move randomly
-                tryMove(randomDirection());
+                // attack
+                if (lockedEnemyLocation != null) {
+                    //report an enemy
+                    rc.broadcast(SOLDIER_MIN_CHANEL, rc.getID());
+                    rc.broadcastFloat(SOLDIER_MIN_CHANEL + 1, lockedEnemyLocation.x);
+                    rc.broadcastFloat(SOLDIER_MIN_CHANEL + 2, lockedEnemyLocation.y);
+
+                    if (!dodge())
+                        navigateTo(lockedEnemyLocation,line);
+                    //we are either attacking and dodging or navigating to enemy
+                    if (attack) {
+                        //try consecutively pentad/triad/single shots
+                        if (rc.canFirePentadShot()) {
+                            rc.firePentadShot(myLocation.directionTo(lockedEnemyLocation));
+                        } else if (rc.canFireTriadShot()) {
+                            rc.fireTriadShot(myLocation.directionTo(lockedEnemyLocation));
+                        } else if (rc.canFireSingleShot()) {
+                            rc.fireSingleShot(myLocation.directionTo(lockedEnemyLocation));
+                        }
+                    }
+                }
+                else
+                    tryMove(randomDirection());
 
                 // Clock.yield() makes the robot wait until the next turn, then it will perform this loop again
                 Clock.yield();
@@ -401,6 +459,86 @@ public strictfp class RobotPlayer {
                 e.printStackTrace();
             }
         }
+    }
+
+    //find a robot with highest priority
+    static MapLocation findBiggestPriority(RobotInfo[] robots) {
+        RobotInfo highest = robots[0];
+
+        for (int i = 1; i < robots.length; i++) {
+            //the robot must be either higher tier type or closer to be the highest priority
+            if (typePriority(highest) < typePriority(robots[i]))
+                highest = robots[i];
+        }
+
+        return highest.location;
+    }
+
+    static int typePriority(RobotInfo robot) {
+        switch (robot.getType()) {
+            case ARCHON:
+                return 6;
+            case TANK:
+                return 5;
+            case SOLDIER:
+                return 4;
+            case LUMBERJACK:
+                return 3;
+            case GARDENER:
+                return 2;
+            case SCOUT:
+                return 1;
+            default:
+                return 0;
+        }
+    }
+
+    //computes if the bullets going towards me are critically close
+    static boolean dodge() throws GameActionException
+    {
+        RobotType currentType = rc.getType();
+        MapLocation currentDestination = rc.getLocation();
+        BulletInfo[] bullets = rc.senseNearbyBullets();
+        RobotInfo[] lumberjacks = rc.senseNearbyRobots(-1, rc.getTeam().opponent());
+        lumberjacks = Arrays.stream(lumberjacks).filter(robot -> robot.getType() == RobotType.LUMBERJACK).toArray(RobotInfo[]::new);
+
+        if (bullets.length == 0 && lumberjacks.length == 0)
+            return false;
+        //compute for each bullet a distance between the direction vector of the bullet and the center of the robot
+        //add to the robots destination location necessary direction and distance to dodge the bullet
+        for (BulletInfo bullet : bullets)
+        {
+            //get where the bullet ends this turn
+            MapLocation bulletDest = bullet.location.add(bullet.dir,bullet.speed);
+            //direction vector
+            float Sx = bulletDest.x -  bullet.location.x;
+            float Sy = bulletDest.y - bullet.location.y;
+
+            //equation constant
+            float c = bullet.location.x * Sy - Sx * bullet.location.y;
+
+            //distance from bullet direction to center of the robot
+            float vectorToCenterDistance = (-Sy * myLocation.x + Sx * myLocation.y + c)/(float)Math.sqrt(Math.pow(Sy,2)+Math.pow(Sx,2));
+
+            //distance necessary to move to dodge the bullet
+            float moveDistance = currentType.bodyRadius - vectorToCenterDistance;
+
+            //the direction perpendicular to the bullet direction
+            Direction direction = bullet.dir.rotateLeftDegrees(90);
+            if (bullet.dir.degreesBetween(bullet.location.directionTo(currentDestination)) <= 0)
+                direction = bullet.dir.rotateRightDegrees(90);
+
+            currentDestination.add(direction,moveDistance);
+        }
+        //move away from lumberjacks
+        for (RobotInfo lumberjack : lumberjacks)
+        {
+            currentDestination.add(currentDestination.directionTo(lumberjack.location).opposite(),
+                    lumberjack.getRadius() + rc.getType().bodyRadius);
+        }
+        rc.move(currentDestination);
+
+        return true;
     }
 
     static void runLumberjack() throws GameActionException {
@@ -442,16 +580,6 @@ public strictfp class RobotPlayer {
             } catch (Exception e) {
                 System.out.println("Lumberjack Exception");
                 e.printStackTrace();
-            }
-        }
-    }
-
-    static void runTank() throws GameActionException {
-        while (true) {
-            try {
-                tryMove(randomDirection());
-            } catch (GameActionException e) {
-
             }
         }
     }
@@ -516,6 +644,76 @@ public strictfp class RobotPlayer {
         return false;
     }
 
+    static public class mLine
+    {
+        public mLine(Direction dir, MapLocation begin, MapLocation end)
+        {
+            this.begin = begin;
+            this.dir = dir;
+            this.end = end;
+        }
+        Direction dir;
+        MapLocation begin;
+        MapLocation end;
+    }
+
+    static Direction lastDir;
+    static void navigateTo(MapLocation destination, mLine line) throws GameActionException
+    {
+        if (line == null) return;
+
+        // calculate general form of the mline ax + by + c = 0
+        float a = -(line.end.y - line.begin.y); // direction in y coordinate
+        float b = line.end.x - line.begin.x; // direction in x coordinate
+        float c = - a*line.begin.x - b*line.begin.y;
+
+        // calculate our distance from the mline
+        float distance = (a * myLocation.x + b * myLocation.y + c)/(float)(Math.sqrt(a*a+b*b));
+
+        // follow the mline
+        if (distance < rc.getType().bodyRadius / 2)
+        {
+            if (rc.canMove(line.dir, rc.getType().strideRadius))
+            {
+                rc.move(line.dir, rc.getType().strideRadius);
+                lastDir = line.dir;
+                return;
+            }
+        }
+
+        Direction firstPossible = null;
+        Direction secondPossible = null;
+        boolean firstFound = false;
+        // could not follow the m-line, follow obstacle
+        //find possible
+        for (int i = 0; i < 360; i++)
+        {
+            Direction current = line.dir.rotateLeftDegrees(i);
+
+            if (!firstFound && rc.canMove(current))
+            {
+                firstPossible = current;
+                firstFound = true;
+            }
+            else if(!rc.canMove(current) && firstFound)
+            {
+                secondPossible = current.rotateRightDegrees(1);
+                break;
+            }
+        }
+
+        //choose possibility and move that way
+        if (firstPossible == null || lastDir == firstPossible.opposite())
+        {
+            rc.move(secondPossible);
+            lastDir = secondPossible;
+        }
+        else
+        {
+            rc.move(firstPossible);
+            lastDir = secondPossible;
+        }
+    }
     /**
      * A slightly more complicated example function, this returns true if the given bullet is on a collision
      * course with the current robot. Doesn't take into account objects between the bullet and this robot.
