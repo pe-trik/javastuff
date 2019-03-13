@@ -16,8 +16,9 @@ public strictfp class RobotPlayer {
      */
 
     static MapLocation[] enemyArchonLocations;
+    static int[] myArchonLocations;
     static float bullets = 0;
-    static final int DONATION_TRESHOLD = 1000;
+    static final int DONATION_TRESHOLD = 1200;
 
     static void donate() throws GameActionException {
         float bulletsToWin = rc.getVictoryPointCost() * (GameConstants.VICTORY_POINTS_TO_WIN - rc.getTeamVictoryPoints());
@@ -107,12 +108,13 @@ public strictfp class RobotPlayer {
     static final int GARDENERS_DEMAND_CHANNEL = 4;
 
     static int round;
-    static int leaderID = -1;
+    static int leaderID;
     static int lastLeaderEcho;
 
     static void runArchon() throws GameActionException {
 
         int myID = rc.getID();
+        leaderID = 0;
 
         while (true) {
 
@@ -140,18 +142,26 @@ public strictfp class RobotPlayer {
         }
     }
 
+    static int leadershipRounds = 0;
+    static final int ARCHON_NEXT_LEADER_CHANNEL = 15;
+
     private static void archonLeaderManagement(int myID) throws GameActionException {
         leaderID = rc.readBroadcastInt(ARCHON_LEADER_CHANNEL);
         lastLeaderEcho = rc.readBroadcastInt(ARCHON_LEADER_ECHO_CHANNEL);
         round = rc.getRoundNum();
-
+        if (leaderID != myID)
+            rc.broadcastInt(ARCHON_NEXT_LEADER_CHANNEL, myID);
         if (round >= lastLeaderEcho + ARCHON_LEADER_ECHO) {
             if (leaderID == myID) {
                 rc.broadcastInt(ARCHON_LEADER_ECHO_CHANNEL, round);
-            } else {
-                archons--;
-                rc.broadcastInt(ARCHON_LEADER_ECHO_CHANNEL, round);
+                if (++leadershipRounds > 80 && enemyArchonLocations.length > 1) {
+                    leadershipRounds = 0;
+                    leaderID = rc.readBroadcastInt(ARCHON_NEXT_LEADER_CHANNEL);
+                    rc.broadcastInt(ARCHON_LEADER_CHANNEL, leaderID);
+                }
+            } else if (round > lastLeaderEcho + ARCHON_LEADER_ECHO) {
                 rc.broadcastInt(ARCHON_LEADER_CHANNEL, myID);
+                rc.broadcastInt(ARCHON_LEADER_ECHO_CHANNEL, round);
             }
         }
     }
@@ -184,6 +194,8 @@ public strictfp class RobotPlayer {
             int trees = rc.readBroadcast(TREE_CHANNEL);
             int soldiers = rc.readBroadcast(SOLDIER_CHANNEL);
             int gardeners = rc.readBroadcastInt(GARDENERS_CHANNEL);
+            int lumberjacks = rc.readBroadcastInt(LUMBERJACK_CHANNEL);
+            int tanks = rc.readBroadcastInt(TANK_CHANNEL);
 
 
             rc.broadcastInt(TREE_DEMAND_CHANNEL, 1);
@@ -193,6 +205,12 @@ public strictfp class RobotPlayer {
             if (gardeners == 0
                     || trees >= gardeners * 2)
                 rc.broadcastInt(GARDENERS_DEMAND_CHANNEL, 1);
+
+            /*if(gardeners > 3 && gardeners > lumberjacks)
+                rc.broadcastInt(LUMBERJACK_DEMAND_CHANNEL, 1);*/
+
+            if(gardeners > 2 && gardeners > tanks / 1.5f)
+                rc.broadcastInt(TANK_DEMAND_CHANNEL, 1);
         }
     }
 
@@ -223,10 +241,10 @@ public strictfp class RobotPlayer {
     static int myLivingTrees = 0;
     static int myPlantedTress = 0;
     static boolean inPlace = false;
+    static boolean deceased = false;
 
     static void runGardener() throws GameActionException {
 
-        boolean deceased = false;
         int movements = 0;
         MapLocation destination = getGardenerSpot();
 
@@ -261,9 +279,10 @@ public strictfp class RobotPlayer {
 
                 tryShakeTree();
 
-                if(!deceased && rc.getHealth() * 2 < RobotType.GARDENER.maxHealth){
+                if (!deceased && rc.getHealth() * 2 < RobotType.GARDENER.maxHealth) {
                     deceased = true;
                     rc.broadcastInt(GARDENERS_CHANNEL, rc.readBroadcastInt(GARDENERS_CHANNEL) - 1);
+                    rc.broadcastInt(TREE_CHANNEL, rc.readBroadcastInt(TREE_CHANNEL) - myLivingTrees);
                     evaluateUnitsDemands();
                 }
 
@@ -278,7 +297,7 @@ public strictfp class RobotPlayer {
     }
 
     static MapLocation getGardenerSpot() throws GameActionException {
-        MapLocation l = rc.getLocation().add(toRandomEnemy(), 2);
+        MapLocation l = rc.getLocation().add(toRandomEnemy(), 5);
         for (int i = GARDENERS_SPOTS_CHANNEL; i < GameConstants.BROADCAST_MAX_CHANNELS - 1; i++) {
             int x = rc.readBroadcastInt(i);
             int y = rc.readBroadcastInt(++i);
@@ -389,8 +408,10 @@ public strictfp class RobotPlayer {
                     gardenerHiringSpot = d.rotateRightDegrees(180);
             } else if (!gardenerHiringSpot.equals(d, 0.001f)
                     && rc.canPlantTree(d)) {
-                rc.broadcastInt(TREE_DEMAND_CHANNEL, --td);
-                rc.broadcastInt(TREE_CHANNEL, 1 + rc.readBroadcast(TREE_CHANNEL));
+                if (!deceased) {
+                    rc.broadcastInt(TREE_DEMAND_CHANNEL, --td);
+                    rc.broadcastInt(TREE_CHANNEL, 1 + rc.readBroadcast(TREE_CHANNEL));
+                }
                 rc.plantTree(d);
                 ++myPlantedTress;
                 evaluateUnitsDemands();
@@ -403,7 +424,7 @@ public strictfp class RobotPlayer {
         TreeInfo[] teamTrees = rc.senseNearbyTrees(GameConstants.BULLET_TREE_RADIUS * 2, myTeam);
         myLivingTrees = teamTrees.length;
         //detect dead trees
-        if(myPlantedTress > myLivingTrees){
+        if (myPlantedTress > myLivingTrees) {
             rc.broadcastInt(TREE_CHANNEL, rc.readBroadcastInt(TREE_CHANNEL) - myPlantedTress + myLivingTrees);
             myPlantedTress = myLivingTrees;
         }
@@ -496,7 +517,7 @@ public strictfp class RobotPlayer {
                 } else
                     tryMove(randomDirection());
 
-                if(!deceased && rc.getHealth() * 2 < RobotType.SOLDIER.maxHealth){
+                if (!deceased && rc.getHealth() * 2 < RobotType.SOLDIER.maxHealth) {
                     deceased = true;
                     rc.broadcastInt(SOLDIER_CHANNEL, rc.readBroadcastInt(SOLDIER_CHANNEL) - 1);
                     evaluateUnitsDemands();
