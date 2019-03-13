@@ -385,7 +385,7 @@ public strictfp class RobotPlayer {
         System.out.println("I'm an soldier!");
         Team enemy = rc.getTeam().opponent();
         MapLocation lockedEnemyLocation = null;
-        MapLocation lastLockedEnemyLocation = lockedEnemyLocation;
+        MapLocation lastLockedEnemyLocation = null;
         boolean attack = false;
         mLine line = null;
 
@@ -418,26 +418,25 @@ public strictfp class RobotPlayer {
                 else if (enemyArchonLocations.length > 0)
                     lockedEnemyLocation = enemyArchonLocations[0];
 
-                System.out.println(lockedEnemyLocation);
-
-                //check if we changed the enemy location - change mLine for navigation
-                if (lastLockedEnemyLocation != lockedEnemyLocation)
-                {
-                    line = new mLine(myLocation.directionTo(lockedEnemyLocation),
-                            myLocation,
-                            lockedEnemyLocation);
-                    rc.setIndicatorLine(line.begin,line.end,0,0,0);
-                }
 
                 // attack
                 if (lockedEnemyLocation != null) {
+
                     //report an enemy
                     rc.broadcast(SOLDIER_MIN_CHANEL, rc.getID());
                     rc.broadcastFloat(SOLDIER_MIN_CHANEL + 1, lockedEnemyLocation.x);
                     rc.broadcastFloat(SOLDIER_MIN_CHANEL + 2, lockedEnemyLocation.y);
 
                     if (!dodge())
-                        navigateTo(lockedEnemyLocation,line);
+                    {
+                        if (lastLockedEnemyLocation == null || !lastLockedEnemyLocation.equals(lockedEnemyLocation))
+                        {
+                            line = new mLine(myLocation.directionTo(lockedEnemyLocation),
+                                    myLocation,
+                                    lockedEnemyLocation);
+                        }
+                        navigateTo(line);
+                    }
                     //we are either attacking and dodging or navigating to enemy
                     if (attack) {
                         //try consecutively pentad/triad/single shots
@@ -453,6 +452,8 @@ public strictfp class RobotPlayer {
                 else
                     tryMove(randomDirection());
 
+                if (line != null)
+                    rc.setIndicatorLine(line.begin,line.end,0,0,0);
                 // Clock.yield() makes the robot wait until the next turn, then it will perform this loop again
                 Clock.yield();
 
@@ -523,23 +524,27 @@ public strictfp class RobotPlayer {
             float vectorToCenterDistance = (-Sy * myLocation.x + Sx * myLocation.y + c)/(float)Math.sqrt(Math.pow(Sy,2)+Math.pow(Sx,2));
 
             //distance necessary to move to dodge the bullet
-            float moveDistance = currentType.bodyRadius - vectorToCenterDistance;
+            float moveDistance = (currentType.bodyRadius - vectorToCenterDistance > 0) ? currentType.bodyRadius - vectorToCenterDistance : 0;
 
             //the direction perpendicular to the bullet direction
             Direction direction = bullet.dir.rotateLeftDegrees(90);
             if (bullet.dir.degreesBetween(bullet.location.directionTo(currentDestination)) <= 0)
                 direction = bullet.dir.rotateRightDegrees(90);
-
-            currentDestination.add(direction,moveDistance);
+            currentDestination = currentDestination.add(direction,moveDistance);
         }
         //move away from lumberjacks
         for (RobotInfo lumberjack : lumberjacks)
         {
-            currentDestination.add(currentDestination.directionTo(lumberjack.location).opposite(),
+            currentDestination = currentDestination.add(currentDestination.directionTo(lumberjack.location).opposite(),
                     lumberjack.getRadius() + rc.getType().bodyRadius);
         }
-        rc.move(currentDestination);
 
+        if (rc.canMove(currentDestination))
+            rc.move(currentDestination);
+        else
+            return false;
+
+        rc.setIndicatorLine(rc.getLocation(),currentDestination,0,255,255);
         return true;
     }
 
@@ -552,7 +557,6 @@ public strictfp class RobotPlayer {
 
             // Try/catch blocks stop unhandled exceptions, which cause your robot to explode
             try {
-
                 // See if there are any enemy robots within striking range (distance 1 from lumberjack's radius)
                 RobotInfo[] robots = rc.senseNearbyRobots(RobotType.LUMBERJACK.bodyRadius + GameConstants.LUMBERJACK_STRIKE_RADIUS, enemy);
 
@@ -660,7 +664,7 @@ public strictfp class RobotPlayer {
     }
 
     static Direction lastDir;
-    static void navigateTo(MapLocation destination, mLine line) throws GameActionException
+    static void navigateTo(mLine line) throws GameActionException
     {
         if (line == null) return;
 
@@ -671,51 +675,88 @@ public strictfp class RobotPlayer {
 
         // calculate our distance from the mline
         float distance = (a * myLocation.x + b * myLocation.y + c)/(float)(Math.sqrt(a*a+b*b));
-
-        // follow the mline
+        // follow the mline if we are on it and we can move in its direction
         if (distance < rc.getType().bodyRadius / 2)
         {
+            System.out.println("Im on the m-line");
+            lastDir = line.dir;
             if (rc.canMove(line.dir, rc.getType().strideRadius))
             {
                 rc.move(line.dir, rc.getType().strideRadius);
-                lastDir = line.dir;
                 return;
             }
         }
 
-        Direction firstPossible = null;
-        Direction secondPossible = null;
-        boolean firstFound = false;
-        // could not follow the m-line, follow obstacle
-        //find possible
-        for (int i = 0; i < 360; i++)
-        {
-            Direction current = line.dir.rotateLeftDegrees(i);
+        System.out.println("cant follow m-line, following obstacle");
+        Direction leftChoice = lastDir;
+        Direction rightChoice = lastDir;
 
-            if (!firstFound && rc.canMove(current))
+        //hit an obstacle
+        if (!rc.canMove(lastDir))
+        {
+            for (int i = 1; i <= 180; i++)
             {
-                firstPossible = current;
-                firstFound = true;
-            }
-            else if(!rc.canMove(current) && firstFound)
-            {
-                secondPossible = current.rotateRightDegrees(1);
-                break;
+                Direction currentLeft = lastDir.rotateLeftDegrees(i);
+                if (rc.canMove(currentLeft))
+                {
+                    lastDir = currentLeft;
+                    break;
+                }
+                Direction currentRight = lastDir.rotateRightDegrees(i);
+                if (rc.canMove(currentRight))
+                {
+                    lastDir = currentRight;
+                    break;
+                }
             }
         }
+
+        boolean leftFound = false;
+        boolean rightFound = false;
+
+        // could not follow the m-line, follow obstacle
+        for (int i = 0; i <= 180; i++)
+        {
+            if (!leftFound)
+            {
+                Direction currentLeft = lastDir.rotateLeftDegrees(i);
+                if (rc.canMove(currentLeft))
+                    leftChoice = currentLeft;
+                else
+                    leftFound = true;
+            }
+
+            if (!rightFound)
+            {
+                Direction currentRight = lastDir.rotateRightDegrees(i);
+                if (rc.canMove(currentRight))
+                    rightChoice = currentRight;
+                else
+                    rightFound = true;
+            }
+            if (leftFound && rightFound) break;
+
+        }
+
+        rc.setIndicatorLine(rc.getLocation(),rc.getLocation().add(leftChoice,3),255,0,0);
+        rc.setIndicatorLine(rc.getLocation(),rc.getLocation().add(rightChoice,3),0,0,255);
 
         //choose possibility and move that way
-        if (firstPossible == null || lastDir == firstPossible.opposite())
+        if (Math.abs(leftChoice.degreesBetween(lastDir)) < Math.abs(rightChoice.degreesBetween(lastDir)))
         {
-            rc.move(secondPossible);
-            lastDir = secondPossible;
+            rc.move(leftChoice);
+            lastDir = leftChoice;
         }
-        else
-        {
-            rc.move(firstPossible);
-            lastDir = secondPossible;
+        else {
+            rc.move(rightChoice);
+            lastDir = rightChoice;
         }
+
     }
+
+
+
+
     /**
      * A slightly more complicated example function, this returns true if the given bullet is on a collision
      * course with the current robot. Doesn't take into account objects between the bullet and this robot.
