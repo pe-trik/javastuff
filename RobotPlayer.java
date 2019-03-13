@@ -4,6 +4,7 @@ import battlecode.common.*;
 
 import java.util.Arrays;
 import java.util.Random;
+import java.util.ArrayList;
 
 
 public strictfp class RobotPlayer {
@@ -595,35 +596,130 @@ public strictfp class RobotPlayer {
         return true;
     }
 
+   /* prioritize robots - if a robot is nearby, attack a robot
+     * otherwise focus on chopping up trees
+     * save the tree a lumberjack is going to focus on in a currentTree
+     * if currentTree is not initialized
+     * 1) pick from nearby trees
+     * 2) broadcast a question
+     * 3) check broadcast answers
+     * 4) if no answer, move at random
+     * if currentTree is initialized
+     * 1) if at chopping distance, chop up the tree and check whether it's not dead
+     * 2) if not then check if it's possible to move towards this tree
+     * 3) if yes, move towards this tree
+     * Broadcasting rules:
+       1) channel 50, integer 0 - I NEED HELP
+       2) channel 51, integer - position x
+       3) channel 52, integer - position y
+    */
     static void runLumberjack() throws GameActionException {
         System.out.println("I'm a lumberjack!");
+
+        MapLocation currentTree = null; // current tree
+        MapLocation nextTree = null; // tree that can be far away
+
+        mLine line = null;
+
+        TreeInfo[] nearbyTrees = rc.senseNearbyTrees();
+        if (nearbyTrees.length != 0)
+            currentTree = nearbyTrees[0].location;
+
+        ArrayList<MapLocation> unreachableTrees = new ArrayList<MapLocation>(); // list of unreachable trees
+
         Team enemy = rc.getTeam().opponent();
 
         // The code you want your robot to perform every round should be in this loop
         while (true) {
-
+            
             // Try/catch blocks stop unhandled exceptions, which cause your robot to explode
             try {
                 // See if there are any enemy robots within striking range (distance 1 from lumberjack's radius)
                 RobotInfo[] robots = rc.senseNearbyRobots(RobotType.LUMBERJACK.bodyRadius + GameConstants.LUMBERJACK_STRIKE_RADIUS, enemy);
-
                 if (robots.length > 0 && !rc.hasAttacked()) {
                     // Use strike() to hit all nearby robots!
                     rc.strike();
-                } else {
-                    // No close robots, so search for robots within sight radius
-                    robots = rc.senseNearbyRobots(-1, enemy);
+                }
+                // update nearby trees
+                nearbyTrees = rc.senseNearbyTrees();
+                if (currentTree == null)
+                {
+                    System.out.println("No tree found");
+                    for (TreeInfo tree : nearbyTrees)
+                    {
+                        if (!unreachableTrees.contains(tree.location))
+                        {
+                            currentTree = tree.location;
+                            line = new mLine(rc.getLocation(), currentTree);
+                            break;
+                        }
+                    }
+                    if (currentTree == null)
+                    {
+                        // broadcasting, channels 50-59
 
-                    // If there is a robot, move towards it
-                    if (robots.length > 0) {
-                        MapLocation myLocation = rc.getLocation();
-                        MapLocation enemyLocation = robots[0].getLocation();
-                        Direction toEnemy = myLocation.directionTo(enemyLocation);
+                        // call for help
+                        rc.broadcast(50, 0);
+                        // read broadcast whether help came
+                        float x = rc.readBroadcastFloat(51);
+                        float y = rc.readBroadcastFloat(52);
+                        // if there was something broadcasted
+                        if (x != 0 && y != 0)
+                            nextTree = new MapLocation(x,y);
+                        if (nextTree != null && !unreachableTrees.contains(nextTree))
+                        {
+                            currentTree = nextTree;
+                            line = new mLine(rc.getLocation(), currentTree);
+                            nextTree = null;
+                        }
+                        else
+                        {
+                            // move at random while no help
+                            tryMove(randomDirection());
+                        }
+                    }
+                }
+                else
+                {
+                    // chop into the tree if you can
+                    if (rc.canInteractWithTree(currentTree))
+                    {
+                        System.out.println("Chopping up a tree");
+                        rc.chop(currentTree);
+                        // if tree died
+                        if (treeIsDead(currentTree))
+                        {
+                            currentTree = null;
+                            line = null;
+                        }
+                    }
+                    else // move towards the tree
+                    {
+                        System.out.println("Moving to a tree");
+                        if (rc.canMove(currentTree))
+                            rc.move(currentTree);
+                        else
+                        {
+                            // try to reach current tree
+                            navigateTo(line);
+                        }
+                    }
+                }
 
-                        tryMove(toEnemy);
-                    } else {
-                        // Move Randomly
-                        tryMove(randomDirection());
+                // try to answer back to anyone who needs help
+
+                int needHelp = rc.readBroadcast(50);
+                if (needHelp == 0)
+                {
+                    for (TreeInfo tree : nearbyTrees)
+                    {
+                        if (tree.location != currentTree) // that means a different tree - two trees can't be at the same location
+                        {
+                            // found a tree to be broadcasted
+                            rc.broadcastFloat(51, tree.location.x);
+                            rc.broadcastFloat(52, tree.location.y);
+                            break;
+                        }
                     }
                 }
 
@@ -636,6 +732,21 @@ public strictfp class RobotPlayer {
             }
         }
     }
+
+    static boolean treeIsDead(MapLocation tree) throws GameActionException
+    {
+        boolean result = false;
+        try
+        {
+            result = (rc.senseTreeAtLocation(tree) == null);
+        }
+        catch (Exception e) {
+            System.out.println("Tree Exception");
+            e.printStackTrace();
+        }
+        return result;
+    }
+
 
     /**
      * Returns a random Direction
