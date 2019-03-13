@@ -476,8 +476,7 @@ public strictfp class RobotPlayer {
                     {
                         if (lastLockedEnemyLocation == null || !lastLockedEnemyLocation.equals(lockedEnemyLocation))
                         {
-                            line = new mLine(myLocation.directionTo(lockedEnemyLocation),
-                                    myLocation,
+                            line = new mLine(myLocation,
                                     lockedEnemyLocation);
                         }
                         navigateTo(line);
@@ -699,9 +698,9 @@ public strictfp class RobotPlayer {
     }
 
     static public class mLine {
-        public mLine(Direction dir, MapLocation begin, MapLocation end) {
+        public mLine(MapLocation begin, MapLocation end) {
             this.begin = begin;
-            this.dir = dir;
+            this.dir = begin.directionTo(end);
             this.end = end;
         }
 
