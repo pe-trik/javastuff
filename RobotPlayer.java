@@ -2,9 +2,7 @@ package javastuff;
 
 import battlecode.common.*;
 
-import java.util.Arrays;
-import java.util.Random;
-import java.util.ArrayList;
+import java.util.*;
 
 
 public strictfp class RobotPlayer {
@@ -435,6 +433,7 @@ public strictfp class RobotPlayer {
         boolean attack = false;
         mLine line = null;
         boolean deceased = false;
+        LinkedList<MapLocation> lastPositions = new LinkedList<>();
 
         // The code you want your robot to perform every round should be in this loop
         while (true) {
@@ -473,13 +472,11 @@ public strictfp class RobotPlayer {
                     rc.broadcastFloat(SOLDIER_MIN_CHANEL + 1, lockedEnemyLocation.x);
                     rc.broadcastFloat(SOLDIER_MIN_CHANEL + 2, lockedEnemyLocation.y);
 
+                    //movement
                     if (!dodge())
                     {
                         if (lastLockedEnemyLocation == null || !lastLockedEnemyLocation.equals(lockedEnemyLocation))
-                        {
-                            line = new mLine(myLocation,
-                                    lockedEnemyLocation);
-                        }
+                            line = new mLine(myLocation, lockedEnemyLocation);
                         navigateTo(line);
                     }
                     //we are either attacking and dodging or navigating to enemy
@@ -512,6 +509,15 @@ public strictfp class RobotPlayer {
                 e.printStackTrace();
             }
         }
+    }
+
+    static boolean addAndCheckStuck(LinkedList<MapLocation> lastPositions)
+    {
+        boolean toRet = lastPositions.contains(rc.getLocation());
+        if (lastPositions.size() > 10)
+            lastPositions.pop();
+        lastPositions.push(rc.getLocation());
+        return toRet;
     }
 
     //find a robot with highest priority
@@ -867,6 +873,7 @@ public strictfp class RobotPlayer {
                 }
             }
         }
+        rc.setIndicatorLine(rc.getLocation(),rc.getLocation().add(lastDir,3),255,0,255);
 
         boolean leftFound = false;
         boolean rightFound = false;
@@ -894,21 +901,19 @@ public strictfp class RobotPlayer {
             if (leftFound && rightFound) break;
 
         }
-
         rc.setIndicatorLine(rc.getLocation(),rc.getLocation().add(leftChoice,3),255,0,0);
         rc.setIndicatorLine(rc.getLocation(),rc.getLocation().add(rightChoice,3),0,0,255);
 
         //choose possibility and move that way
         if (Math.abs(leftChoice.degreesBetween(lastDir)) < Math.abs(rightChoice.degreesBetween(lastDir)))
         {
-            rc.move(leftChoice);
-            lastDir = leftChoice;
+            if (tryMove(leftChoice))
+                lastDir = leftChoice;
         }
         else {
-            rc.move(rightChoice);
-            lastDir = rightChoice;
+            if (tryMove(rightChoice))
+                lastDir = rightChoice;
         }
-
     }
 
     /**
