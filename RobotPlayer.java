@@ -466,6 +466,8 @@ public strictfp class RobotPlayer {
             // Try/catch blocks stop unhandled exceptions, which cause your robot to explode
             try {
 
+                tryShakeTree();
+
                 attack = false;
                 myLocation = rc.getLocation();
 
@@ -649,15 +651,10 @@ public strictfp class RobotPlayer {
         System.out.println("I'm a lumberjack!");
 
         MapLocation currentTree = null; // current tree
-        MapLocation nextTree = null; // tree that can be far away
 
         mLine line = null;
 
-        TreeInfo[] nearbyTrees = rc.senseNearbyTrees();
-        if (nearbyTrees.length != 0)
-            currentTree = nearbyTrees[0].location;
-
-        ArrayList<MapLocation> unreachableTrees = new ArrayList<MapLocation>(); // list of unreachable trees
+        TreeInfo[] nearbyTrees;
 
         Team enemy = rc.getTeam().opponent();
 
@@ -666,6 +663,7 @@ public strictfp class RobotPlayer {
             
             // Try/catch blocks stop unhandled exceptions, which cause your robot to explode
             try {
+                tryShakeTree();
                 // See if there are any enemy robots within striking range (distance 1 from lumberjack's radius)
                 RobotInfo[] robots = rc.senseNearbyRobots(RobotType.LUMBERJACK.bodyRadius + GameConstants.LUMBERJACK_STRIKE_RADIUS, enemy);
                 if (robots.length > 0 && !rc.hasAttacked()) {
@@ -673,45 +671,38 @@ public strictfp class RobotPlayer {
                     rc.strike();
                 }
                 // update nearby trees
-                nearbyTrees = rc.senseNearbyTrees();
-                if (currentTree == null)
-                {
-                    System.out.println("No tree found");
-                    for (TreeInfo tree : nearbyTrees)
-                    {
-                        if (!unreachableTrees.contains(tree.location))
-                        {
-                            currentTree = tree.location;
-                            line = new mLine(rc.getLocation(), currentTree);
-                            break;
-                        }
-                    }
-                    if (currentTree == null)
-                    {
-                        // broadcasting, channels 50-59
+                nearbyTrees = rc.senseNearbyTrees(-1, Team.NEUTRAL);
 
-                        // call for help
-                        rc.broadcast(50, 0);
-                        // read broadcast whether help came
-                        float x = rc.readBroadcastFloat(51);
-                        float y = rc.readBroadcastFloat(52);
-                        // if there was something broadcasted
-                        if (x != 0 && y != 0)
-                            nextTree = new MapLocation(x,y);
-                        if (nextTree != null && !unreachableTrees.contains(nextTree))
-                        {
-                            currentTree = nextTree;
-                            line = new mLine(rc.getLocation(), currentTree);
-                            nextTree = null;
-                        }
-                        else
-                        {
-                            // move at random while no help
-                            tryMove(randomDirection());
-                        }
-                    }
+                if (nearbyTrees.length > 0)
+                {
+                    //save tree
+                    currentTree = nearbyTrees[0].location;
+                    line = new mLine(rc.getLocation(), currentTree);
+                    //report tree
+                    rc.broadcast(50, rc.getID());
+                    rc.broadcastFloat(51, currentTree.x);
+                    rc.broadcastFloat(52,currentTree.y);
                 }
                 else
+                {
+                    //no tree nearby, listen if someone else broadcasted some tree locations
+                    int id = rc.readBroadcast(50);
+                    if (id != 0 && id != rc.getID())
+                    {
+                        currentTree = new MapLocation(rc.readBroadcastFloat(51), rc.readBroadcastFloat(52));
+                        line = new mLine(rc.getLocation(), currentTree);
+                    }
+                    //move random
+                    else
+                    {
+                        tryMove(randomDirection());
+                    }
+                }
+
+                if (line != null)
+                    rc.setIndicatorLine(line.begin,line.end,0,0,0);
+
+                if (currentTree != null)
                 {
                     // chop into the tree if you can
                     if (rc.canInteractWithTree(currentTree))
@@ -728,30 +719,9 @@ public strictfp class RobotPlayer {
                     else // move towards the tree
                     {
                         System.out.println("Moving to a tree");
-                        if (rc.canMove(currentTree))
-                            rc.move(currentTree);
-                        else
-                        {
-                            // try to reach current tree
-                            navigateTo(line);
-                        }
-                    }
-                }
 
-                // try to answer back to anyone who needs help
-
-                int needHelp = rc.readBroadcast(50);
-                if (needHelp == 0)
-                {
-                    for (TreeInfo tree : nearbyTrees)
-                    {
-                        if (tree.location != currentTree) // that means a different tree - two trees can't be at the same location
-                        {
-                            // found a tree to be broadcasted
-                            rc.broadcastFloat(51, tree.location.x);
-                            rc.broadcastFloat(52, tree.location.y);
-                            break;
-                        }
+                        // try to reach current tree
+                        navigateTo(line);
                     }
                 }
 
@@ -863,7 +833,7 @@ public strictfp class RobotPlayer {
         float c = -a * line.begin.x - b * line.begin.y;
 
         // calculate our distance from the mline
-        float distance = (a * myLocation.x + b * myLocation.y + c)/(float)(Math.sqrt(a*a+b*b));
+        float distance = (a * rc.getLocation().x + b * rc.getLocation().y + c)/(float)(Math.sqrt(a*a+b*b));
         // follow the mline if we are on it and we can move in its direction
         if (distance < rc.getType().bodyRadius / 2)
         {
@@ -930,15 +900,19 @@ public strictfp class RobotPlayer {
         rc.setIndicatorLine(rc.getLocation(),rc.getLocation().add(leftChoice,3),255,0,0);
         rc.setIndicatorLine(rc.getLocation(),rc.getLocation().add(rightChoice,3),0,0,255);
 
-        //choose possibility and move that way
-        if (Math.abs(leftChoice.degreesBetween(lastDir)) < Math.abs(rightChoice.degreesBetween(lastDir)))
-        {
-            if (tryMove(leftChoice))
-                lastDir = leftChoice;
+        if (leftChoice.equals(lastDir.opposite(), (float) 1e-3) && rightChoice.equals(lastDir.opposite(), (float) 1e-3)) {
+            System.out.println("can move anywhere");
+            tryMove(line.dir);
         }
         else {
-            if (tryMove(rightChoice))
-                lastDir = rightChoice;
+            //choose possibility and move that way
+            if (Math.abs(leftChoice.degreesBetween(lastDir)) < Math.abs(rightChoice.degreesBetween(lastDir))) {
+                if (tryMove(leftChoice))
+                    lastDir = leftChoice;
+            } else {
+                if (tryMove(rightChoice))
+                    lastDir = rightChoice;
+            }
         }
     }
 
