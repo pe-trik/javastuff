@@ -834,38 +834,48 @@ public strictfp class RobotPlayer {
         if (distance < rc.getType().bodyRadius / 2)
         {
             System.out.println("Im on the m-line");
-            lastDir = line.dir;
             if (rc.canMove(line.dir, rc.getType().strideRadius))
             {
                 rc.move(line.dir, rc.getType().strideRadius);
+                lastDir = line.dir;
                 return;
             }
         }
 
         System.out.println("cant follow m-line, following obstacle");
-        Direction leftChoice = lastDir;
-        Direction rightChoice = lastDir;
+
+        if (lastDir == null)
+            lastDir = line.dir;
+        Direction newDir = lastDir;
 
         //hit an obstacle
         if (!rc.canMove(lastDir))
         {
-            for (int i = 1; i <= 180; i++)
+            for (int i = 0; i <= 180; i++)
             {
                 Direction currentLeft = lastDir.rotateLeftDegrees(i);
                 if (rc.canMove(currentLeft))
                 {
-                    lastDir = currentLeft;
+                    System.out.println("hit an obstacle, i go left");
+                    newDir = currentLeft;
                     break;
                 }
+
                 Direction currentRight = lastDir.rotateRightDegrees(i);
                 if (rc.canMove(currentRight))
                 {
-                    lastDir = currentRight;
+                    System.out.println("hit an obstacle, i go right");
+                    newDir = currentRight;
                     break;
                 }
             }
         }
-        rc.setIndicatorLine(rc.getLocation(),rc.getLocation().add(lastDir,3),255,0,255);
+
+        rc.setIndicatorLine(rc.getLocation(),rc.getLocation().add(lastDir,3),0,255,255);
+        rc.setIndicatorLine(rc.getLocation(),rc.getLocation().add(newDir,3),255,0,255);
+
+        Direction leftChoice = newDir;
+        Direction rightChoice = newDir;
 
         boolean leftFound = false;
         boolean rightFound = false;
@@ -875,7 +885,7 @@ public strictfp class RobotPlayer {
         {
             if (!leftFound)
             {
-                Direction currentLeft = lastDir.rotateLeftDegrees(i);
+                Direction currentLeft = newDir.rotateLeftDegrees(i);
                 if (rc.canMove(currentLeft))
                     leftChoice = currentLeft;
                 else
@@ -884,7 +894,7 @@ public strictfp class RobotPlayer {
 
             if (!rightFound)
             {
-                Direction currentRight = lastDir.rotateRightDegrees(i);
+                Direction currentRight = newDir.rotateRightDegrees(i);
                 if (rc.canMove(currentRight))
                     rightChoice = currentRight;
                 else
@@ -896,20 +906,17 @@ public strictfp class RobotPlayer {
         rc.setIndicatorLine(rc.getLocation(),rc.getLocation().add(leftChoice,3),255,0,0);
         rc.setIndicatorLine(rc.getLocation(),rc.getLocation().add(rightChoice,3),0,0,255);
 
-        if (leftChoice.equals(lastDir.opposite(), (float) 1e-3) && rightChoice.equals(lastDir.opposite(), (float) 1e-3)) {
-            System.out.println("can move anywhere");
-            tryMove(line.dir);
+        //choose possibility and move that way
+        if (Math.abs(leftChoice.degreesBetween(newDir)) < Math.abs(rightChoice.degreesBetween(newDir)) && tryMove(leftChoice)) {
+                lastDir = leftChoice;
+        } else if (tryMove(rightChoice)) {
+            lastDir = rightChoice;
+        } else if (tryMove(newDir)) {
+            lastDir = newDir;
         }
-        else {
-            //choose possibility and move that way
-            if (Math.abs(leftChoice.degreesBetween(lastDir)) < Math.abs(rightChoice.degreesBetween(lastDir))) {
-                if (tryMove(leftChoice))
-                    lastDir = leftChoice;
-            } else {
-                if (tryMove(rightChoice))
-                    lastDir = rightChoice;
-            }
-        }
+        else
+            tryMove(randomDirection());
+
     }
 
     /**
