@@ -499,8 +499,7 @@ public strictfp class RobotPlayer {
                     //movement
                     if (!dodge())
                     {
-                        if (lastLockedEnemyLocation == null || !lastLockedEnemyLocation.equals(lockedEnemyLocation))
-                            line = new mLine(myLocation, lockedEnemyLocation);
+                        line = new mLine(myLocation, lockedEnemyLocation);
                         navigateTo(line);
                     }
                     //we are either attacking and dodging or navigating to enemy
@@ -533,15 +532,6 @@ public strictfp class RobotPlayer {
                 e.printStackTrace();
             }
         }
-    }
-
-    static boolean addAndCheckStuck(LinkedList<MapLocation> lastPositions)
-    {
-        boolean toRet = lastPositions.contains(rc.getLocation());
-        if (lastPositions.size() > 10)
-            lastPositions.pop();
-        lastPositions.push(rc.getLocation());
-        return toRet;
     }
 
     //find a robot with highest priority
@@ -846,7 +836,6 @@ public strictfp class RobotPlayer {
 
         if (lastDir == null)
             lastDir = line.dir;
-        Direction newDir = lastDir;
 
         //hit an obstacle
         if (!rc.canMove(lastDir))
@@ -857,7 +846,8 @@ public strictfp class RobotPlayer {
                 if (rc.canMove(currentLeft))
                 {
                     System.out.println("hit an obstacle, i go left");
-                    newDir = currentLeft;
+                    lastDir = currentLeft;
+                    rc.move(currentLeft);
                     break;
                 }
 
@@ -865,58 +855,54 @@ public strictfp class RobotPlayer {
                 if (rc.canMove(currentRight))
                 {
                     System.out.println("hit an obstacle, i go right");
-                    newDir = currentRight;
+                    lastDir = currentRight;
+                    rc.move(currentRight);
                     break;
                 }
             }
         }
-
-        rc.setIndicatorLine(rc.getLocation(),rc.getLocation().add(lastDir,3),0,255,255);
-        rc.setIndicatorLine(rc.getLocation(),rc.getLocation().add(newDir,3),255,0,255);
-
-        Direction leftChoice = newDir;
-        Direction rightChoice = newDir;
-
-        boolean leftFound = false;
-        boolean rightFound = false;
-
-        // could not follow the m-line, follow obstacle
-        for (int i = 0; i <= 180; i++)
-        {
-            if (!leftFound)
-            {
-                Direction currentLeft = newDir.rotateLeftDegrees(i);
-                if (rc.canMove(currentLeft))
-                    leftChoice = currentLeft;
-                else
-                    leftFound = true;
-            }
-
-            if (!rightFound)
-            {
-                Direction currentRight = newDir.rotateRightDegrees(i);
-                if (rc.canMove(currentRight))
-                    rightChoice = currentRight;
-                else
-                    rightFound = true;
-            }
-            if (leftFound && rightFound) break;
-
-        }
-        rc.setIndicatorLine(rc.getLocation(),rc.getLocation().add(leftChoice,3),255,0,0);
-        rc.setIndicatorLine(rc.getLocation(),rc.getLocation().add(rightChoice,3),0,0,255);
-
-        //choose possibility and move that way
-        if (Math.abs(leftChoice.degreesBetween(newDir)) < Math.abs(rightChoice.degreesBetween(newDir)) && tryMove(leftChoice)) {
-                lastDir = leftChoice;
-        } else if (tryMove(rightChoice)) {
-            lastDir = rightChoice;
-        } else if (tryMove(newDir)) {
-            lastDir = newDir;
-        }
         else
-            tryMove(randomDirection());
+        {
+            Direction leftChoice = lastDir;
+            Direction rightChoice = lastDir;
 
+            boolean leftFound = false;
+            boolean rightFound = false;
+
+            // could not follow the m-line, follow obstacle
+            for (int i = 0; i <= 180; i++)
+            {
+                if (!leftFound)
+                {
+                    Direction currentLeft = lastDir.rotateLeftDegrees(i);
+                    if (rc.canMove(currentLeft))
+                        leftChoice = currentLeft;
+                    else
+                        leftFound = true;
+                }
+
+                if (!rightFound)
+                {
+                    Direction currentRight = lastDir.rotateRightDegrees(i);
+                    if (rc.canMove(currentRight))
+                        rightChoice = currentRight;
+                    else
+                        rightFound = true;
+                }
+                if (leftFound && rightFound) break;
+
+            }
+            rc.setIndicatorLine(rc.getLocation(),rc.getLocation().add(leftChoice,3),255,0,0);
+            rc.setIndicatorLine(rc.getLocation(),rc.getLocation().add(rightChoice,3),0,0,255);
+
+            //choose possibility and move that way
+            if (Math.abs(leftChoice.degreesBetween(lastDir)) < Math.abs(rightChoice.degreesBetween(lastDir)) && tryMove(leftChoice)) {
+                lastDir = leftChoice;
+            } else if (tryMove(rightChoice)) {
+                lastDir = rightChoice;
+            } else
+                tryMove(randomDirection());
+        }
     }
 
     /**
