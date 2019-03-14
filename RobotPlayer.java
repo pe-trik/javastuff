@@ -114,6 +114,8 @@ public strictfp class RobotPlayer {
 
         int myID = rc.getID();
         leaderID = 0;
+        Direction myDir = toRandomEnemy().opposite();
+        mLine ml = new mLine(rc.getLocation(),rc.getLocation().add(myDir, 5));
 
         while (true) {
 
@@ -130,7 +132,8 @@ public strictfp class RobotPlayer {
 
                 tryShakeTree();
 
-                tryMove(randomDirection());
+                myLocation = rc.getLocation();
+                navigateTo(ml);
 
                 Clock.yield();
 
@@ -205,8 +208,8 @@ public strictfp class RobotPlayer {
                     || trees >= gardeners * 2)
                 rc.broadcastInt(GARDENERS_DEMAND_CHANNEL, 1);
 
-            if(gardeners > 1 && gardeners > lumberjacks)
-                rc.broadcastInt(LUMBERJACK_DEMAND_CHANNEL, 1);
+           /* if(gardeners > 1 && gardeners > lumberjacks)
+                rc.broadcastInt(LUMBERJACK_DEMAND_CHANNEL, 1);*/
 
             if(gardeners > 2 && gardeners > tanks / 1.5f)
                 rc.broadcastInt(TANK_DEMAND_CHANNEL, 1);
@@ -520,6 +523,7 @@ public strictfp class RobotPlayer {
                 if(!deceased && rc.getHealth() * 2 < RobotType.SOLDIER.maxHealth){
                     deceased = true;
                     rc.broadcastInt(SOLDIER_CHANNEL, rc.readBroadcastInt(SOLDIER_CHANNEL) - 1);
+                    //rc.broadcastInt(SOLDIER_DEMAND_CHANNEL, rc.readBroadcastInt(SOLDIER_DEMAND_CHANNEL) + 1);
                     evaluateUnitsDemands();
                 }
 
