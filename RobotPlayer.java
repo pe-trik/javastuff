@@ -15,7 +15,6 @@ public strictfp class RobotPlayer {
      */
 
     static MapLocation[] enemyArchonLocations;
-    static int[] myArchonLocations;
     static float bullets = 0;
     static final int DONATION_TRESHOLD = 1200;
 
@@ -114,6 +113,9 @@ public strictfp class RobotPlayer {
 
         int myID = rc.getID();
         leaderID = 0;
+        Direction myDir = toRandomEnemy().opposite();
+        mLine ml = new mLine(rc.getLocation(), rc.getLocation().add(myDir, 5));
+        int movements = 0;
 
         while (true) {
 
@@ -130,7 +132,9 @@ public strictfp class RobotPlayer {
 
                 tryShakeTree();
 
-                tryMove(randomDirection());
+                myLocation = rc.getLocation();
+                if (movements++ < 20)
+                    navigateTo(ml);
 
                 Clock.yield();
 
@@ -197,7 +201,9 @@ public strictfp class RobotPlayer {
             int tanks = rc.readBroadcastInt(TANK_CHANNEL);
 
 
-            rc.broadcastInt(TREE_DEMAND_CHANNEL, 1);
+            if (gardeners * 3 > trees)
+                rc.broadcastInt(TREE_DEMAND_CHANNEL, 1);
+
             if (soldiers < trees || soldiers < 2)
                 rc.broadcastInt(SOLDIER_DEMAND_CHANNEL, 1);
 
@@ -205,10 +211,10 @@ public strictfp class RobotPlayer {
                     || trees >= gardeners * 2)
                 rc.broadcastInt(GARDENERS_DEMAND_CHANNEL, 1);
 
-            if(gardeners > 1 && gardeners > lumberjacks)
+            if (gardeners > 1 && gardeners > lumberjacks)
                 rc.broadcastInt(LUMBERJACK_DEMAND_CHANNEL, 1);
 
-            if(gardeners > 2 && gardeners > tanks / 1.5f)
+            if (gardeners > 2 && gardeners * 2> tanks)
                 rc.broadcastInt(TANK_DEMAND_CHANNEL, 1);
         }
     }
@@ -246,6 +252,7 @@ public strictfp class RobotPlayer {
 
         int movements = 0;
         MapLocation destination = getGardenerSpot();
+        mLine ml = new mLine(rc.getLocation(), destination);
 
         while (true) {
 
@@ -265,14 +272,14 @@ public strictfp class RobotPlayer {
                     hireUnits();
 
                 } else {
-                    if (glade() || ++movements > 10) {
+                    if (glade() || ++movements > 15) {
                         inPlace = true;
 
                         int g = rc.readBroadcastInt(GARDENERS_CHANNEL);
                         rc.broadcastInt(GARDENERS_SPOTS_CHANNEL + 2 * g, (int) rc.getLocation().x);
                         rc.broadcastInt(GARDENERS_SPOTS_CHANNEL + 2 * g + 1, (int) rc.getLocation().y);
                     } else
-                        tryMove(rc.getLocation().directionTo(destination));
+                        navigateTo(ml);
                 }
 
 
@@ -311,10 +318,10 @@ public strictfp class RobotPlayer {
 
     static void hireUnits() throws GameActionException {
 
-        if (hireUnit(RobotType.LUMBERJACK))
-            return;
-            
         if (hireUnit(RobotType.SOLDIER))
+            return;
+
+        if (hireUnit(RobotType.LUMBERJACK))
             return;
 
         if (hireUnit(RobotType.TANK))
@@ -451,11 +458,9 @@ public strictfp class RobotPlayer {
         System.out.println("I'm an soldier!");
         Team enemy = rc.getTeam().opponent();
         MapLocation lockedEnemyLocation = null;
-        MapLocation lastLockedEnemyLocation = null;
         boolean attack = false;
         mLine line = null;
         boolean deceased = false;
-        LinkedList<MapLocation> lastPositions = new LinkedList<>();
 
         // The code you want your robot to perform every round should be in this loop
         while (true) {
@@ -463,12 +468,20 @@ public strictfp class RobotPlayer {
             // Try/catch blocks stop unhandled exceptions, which cause your robot to explode
             try {
 
+                //shake the tree
                 tryShakeTree();
 
+                //initialize
                 attack = false;
                 myLocation = rc.getLocation();
 
-                lastLockedEnemyLocation = lockedEnemyLocation;
+                //report dead
+                if (lockedEnemyLocation != null && rc.senseNearbyRobots(-1, enemy).length == 0 && myLocation.distanceTo(lockedEnemyLocation) < rc.getType().sensorRadius && rc.readBroadcast(SOLDIER_MIN_CHANEL) == rc.getID())
+                {
+                    rc.broadcast(SOLDIER_MIN_CHANEL, 0);
+                    rc.broadcastFloat(SOLDIER_MIN_CHANEL + 1, 0);
+                    rc.broadcastFloat(SOLDIER_MIN_CHANEL + 2, 0);
+                }
                 lockedEnemyLocation = null;
 
                 // See if there are any nearby enemy robots
@@ -479,30 +492,38 @@ public strictfp class RobotPlayer {
                 if (robots.length > 0) {
                     lockedEnemyLocation = findBiggestPriority(robots);
                     attack = true;
-                }
-                //else listen if someone reported enemies locations
-                else if (rc.readBroadcastInt(SOLDIER_MIN_CHANEL) != 0)
-                    lockedEnemyLocation = new MapLocation(rc.readBroadcastFloat(SOLDIER_MIN_CHANEL + 1), rc.readBroadcastFloat(SOLDIER_MIN_CHANEL + 2));
-                    //look at enemy archons locations
-                else if (enemyArchonLocations.length > 0)
-                    lockedEnemyLocation = enemyArchonLocations[0];
-
-
-                // attack
-                if (lockedEnemyLocation != null) {
-
                     //report an enemy
                     rc.broadcast(SOLDIER_MIN_CHANEL, rc.getID());
                     rc.broadcastFloat(SOLDIER_MIN_CHANEL + 1, lockedEnemyLocation.x);
                     rc.broadcastFloat(SOLDIER_MIN_CHANEL + 2, lockedEnemyLocation.y);
+                }
+                //else listen if someone reported enemies locations
+                else if (rc.readBroadcastInt(SOLDIER_MIN_CHANEL) != 0 && rc.readBroadcast(SOLDIER_MIN_CHANEL) != rc.getID())
+                    lockedEnemyLocation = new MapLocation(rc.readBroadcastFloat(SOLDIER_MIN_CHANEL + 1), rc.readBroadcastFloat(SOLDIER_MIN_CHANEL + 2));
+                //look at enemy archons locations
+                else if (enemyArchonLocations.length > 0)
+                {
+                    for (int i = 0; i < enemyArchonLocations.length; i++)
+                    {
+                        if (enemyArchonLocations[i].distanceTo(rc.getLocation()) > rc.getType().sensorRadius) {
+                            lockedEnemyLocation = enemyArchonLocations[i];
+                            break;
+                        }
+                    }
+                }
+
+
+                // there is locked enemy
+                if (lockedEnemyLocation != null) {
 
                     //movement
                     if (!dodge())
                     {
+                        //no dodging, navigate
                         line = new mLine(myLocation, lockedEnemyLocation);
                         navigateTo(line);
                     }
-                    //we are either attacking and dodging or navigating to enemy
+                    //attack
                     if (attack) {
                         //try consecutively pentad/triad/single shots
                         if (rc.canFirePentadShot()) {
@@ -514,11 +535,14 @@ public strictfp class RobotPlayer {
                         }
                     }
                 } else
+                    //no enemy found, try moving random
                     tryMove(randomDirection());
 
+                //debug
                 if (line != null)
-                    rc.setIndicatorLine(line.begin,line.end,0,0,0);
-                if(!deceased && rc.getHealth() * 2 < RobotType.SOLDIER.maxHealth){
+                    rc.setIndicatorLine(line.begin, line.end, 0, 0, 0);
+
+                if (!deceased && rc.getHealth() * 2 < RobotType.SOLDIER.maxHealth) {
                     deceased = true;
                     rc.broadcastInt(SOLDIER_CHANNEL, rc.readBroadcastInt(SOLDIER_CHANNEL) - 1);
                     evaluateUnitsDemands();
@@ -568,71 +592,79 @@ public strictfp class RobotPlayer {
 
     //computes if the bullets going towards me are critically close
     static boolean dodge() throws GameActionException {
-        RobotType currentType = rc.getType();
-        MapLocation currentDestination = rc.getLocation();
-        BulletInfo[] bullets = rc.senseNearbyBullets();
-        RobotInfo[] lumberjacks = rc.senseNearbyRobots(-1, rc.getTeam().opponent());
-        lumberjacks = Arrays.stream(lumberjacks).filter(robot -> robot.getType() == RobotType.LUMBERJACK).toArray(RobotInfo[]::new);
+        try {
 
-        if (bullets.length == 0 && lumberjacks.length == 0)
-            return false;
-        //compute for each bullet a distance between the direction vector of the bullet and the center of the robot
-        //add to the robots destination location necessary direction and distance to dodge the bullet
-        for (BulletInfo bullet : bullets) {
-            //get where the bullet ends this turn
-            MapLocation bulletDest = bullet.location.add(bullet.dir, bullet.speed);
-            //direction vector
-            float Sx = bulletDest.x - bullet.location.x;
-            float Sy = bulletDest.y - bullet.location.y;
 
-            //equation constant
-            float c = bullet.location.x * Sy - Sx * bullet.location.y;
+            RobotType currentType = rc.getType();
+            MapLocation currentDestination = rc.getLocation();
+            BulletInfo[] bullets = rc.senseNearbyBullets();
+            RobotInfo[] lumberjacks = rc.senseNearbyRobots(-1, rc.getTeam().opponent());
+            lumberjacks = Arrays.stream(lumberjacks).filter(robot -> robot.getType() == RobotType.LUMBERJACK).toArray(RobotInfo[]::new);
 
-            //distance from bullet direction to center of the robot
-            float vectorToCenterDistance = (-Sy * myLocation.x + Sx * myLocation.y + c) / (float) Math.sqrt(Math.pow(Sy, 2) + Math.pow(Sx, 2));
+            if (bullets.length == 0 && lumberjacks.length == 0)
+                return false;
+            //compute for each bullet a distance between the direction vector of the bullet and the center of the robot
+            //add to the robots destination location necessary direction and distance to dodge the bullet
+            for (BulletInfo bullet : bullets) {
+                //get where the bullet ends this turn
+                MapLocation bulletDest = bullet.location.add(bullet.dir, bullet.speed);
+                //direction vector
+                float Sx = bulletDest.x - bullet.location.x;
+                float Sy = bulletDest.y - bullet.location.y;
 
-            //distance necessary to move to dodge the bullet
-            float moveDistance = (currentType.bodyRadius - vectorToCenterDistance > 0) ? currentType.bodyRadius - vectorToCenterDistance : 0;
+                //equation constant
+                float c = bullet.location.x * Sy - Sx * bullet.location.y;
 
-            //the direction perpendicular to the bullet direction
-            Direction direction = bullet.dir.rotateLeftDegrees(90);
-            if (bullet.dir.degreesBetween(bullet.location.directionTo(currentDestination)) <= 0)
-                direction = bullet.dir.rotateRightDegrees(90);
-            currentDestination = currentDestination.add(direction,moveDistance);
+                //distance from bullet direction to center of the robot
+                float vectorToCenterDistance = (-Sy * myLocation.x + Sx * myLocation.y + c) / (float) Math.sqrt(Math.pow(Sy, 2) + Math.pow(Sx, 2));
+
+                //distance necessary to move to dodge the bullet
+                float moveDistance = (currentType.bodyRadius - vectorToCenterDistance > 0) ? currentType.bodyRadius - vectorToCenterDistance : 0;
+
+                //the direction perpendicular to the bullet direction
+                Direction direction = bullet.dir.rotateLeftDegrees(90);
+                if (bullet.dir.degreesBetween(bullet.location.directionTo(currentDestination)) <= 0)
+                    direction = bullet.dir.rotateRightDegrees(90);
+                currentDestination = currentDestination.add(direction, moveDistance);
+            }
+            //move away from lumberjacks
+            for (RobotInfo lumberjack : lumberjacks) {
+                currentDestination = currentDestination.add(currentDestination.directionTo(lumberjack.location).opposite(),
+                        lumberjack.getRadius() + rc.getType().bodyRadius);
+            }
+
+            if (rc.canMove(currentDestination))
+                rc.move(currentDestination);
+            else
+                return false;
+
+            rc.setIndicatorLine(rc.getLocation(), currentDestination, 0, 255, 255);
+            return true;
         }
-        //move away from lumberjacks
-        for (RobotInfo lumberjack : lumberjacks)
-        {
-            currentDestination = currentDestination.add(currentDestination.directionTo(lumberjack.location).opposite(),
-                    lumberjack.getRadius() + rc.getType().bodyRadius);
-        }
-
-        if (rc.canMove(currentDestination))
-            rc.move(currentDestination);
-        else
+        catch (Exception e) {
+            System.out.println("Dodge Exception");
+            e.printStackTrace();
             return false;
-
-        rc.setIndicatorLine(rc.getLocation(),currentDestination,0,255,255);
-        return true;
+        }
     }
 
-   /* prioritize robots - if a robot is nearby, attack a robot
-     * otherwise focus on chopping up trees
-     * save the tree a lumberjack is going to focus on in a currentTree
-     * if currentTree is not initialized
-     * 1) pick from nearby trees
-     * 2) broadcast a question
-     * 3) check broadcast answers
-     * 4) if no answer, move at random
-     * if currentTree is initialized
-     * 1) if at chopping distance, chop up the tree and check whether it's not dead
-     * 2) if not then check if it's possible to move towards this tree
-     * 3) if yes, move towards this tree
-     * Broadcasting rules:
-       1) channel 50, integer 0 - I NEED HELP
-       2) channel 51, integer - position x
-       3) channel 52, integer - position y
-    */
+    /* prioritize robots - if a robot is nearby, attack a robot
+      * otherwise focus on chopping up trees
+      * save the tree a lumberjack is going to focus on in a currentTree
+      * if currentTree is not initialized
+      * 1) pick from nearby trees
+      * 2) broadcast a question
+      * 3) check broadcast answers
+      * 4) if no answer, move at random
+      * if currentTree is initialized
+      * 1) if at chopping distance, chop up the tree and check whether it's not dead
+      * 2) if not then check if it's possible to move towards this tree
+      * 3) if yes, move towards this tree
+      * Broadcasting rules:
+        1) channel 50, integer 0 - I NEED HELP
+        2) channel 51, integer - position x
+        3) channel 52, integer - position y
+     */
     static void runLumberjack() throws GameActionException {
         System.out.println("I'm a lumberjack!");
 
@@ -641,73 +673,71 @@ public strictfp class RobotPlayer {
         mLine line = null;
 
         TreeInfo[] nearbyTrees;
-
+        boolean attacked;
+        boolean moved;
         Team enemy = rc.getTeam().opponent();
 
         // The code you want your robot to perform every round should be in this loop
         while (true) {
-            
+
             // Try/catch blocks stop unhandled exceptions, which cause your robot to explode
             try {
+                attacked = false;
+                moved= false;
+                //shake the tree
                 tryShakeTree();
-                // See if there are any enemy robots within striking range (distance 1 from lumberjack's radius)
+                // See if there are any enemy robots within striking range
                 RobotInfo[] robots = rc.senseNearbyRobots(RobotType.LUMBERJACK.bodyRadius + GameConstants.LUMBERJACK_STRIKE_RADIUS, enemy);
                 if (robots.length > 0 && !rc.hasAttacked()) {
                     // Use strike() to hit all nearby robots!
                     rc.strike();
+                    attacked = true;
                 }
                 // update nearby trees
                 nearbyTrees = rc.senseNearbyTrees(-1, Team.NEUTRAL);
 
-                if (nearbyTrees.length > 0)
-                {
+                if (nearbyTrees.length > 0) {
                     //save tree
                     currentTree = nearbyTrees[0].location;
                     line = new mLine(rc.getLocation(), currentTree);
                     //report tree
                     rc.broadcast(50, rc.getID());
                     rc.broadcastFloat(51, currentTree.x);
-                    rc.broadcastFloat(52,currentTree.y);
-                }
-                else
-                {
+                    rc.broadcastFloat(52, currentTree.y);
+                } else {
                     //no tree nearby, listen if someone else broadcasted some tree locations
                     int id = rc.readBroadcast(50);
-                    if (id != 0 && id != rc.getID())
-                    {
+                    if (id != 0 && id != rc.getID()) {
                         currentTree = new MapLocation(rc.readBroadcastFloat(51), rc.readBroadcastFloat(52));
                         line = new mLine(rc.getLocation(), currentTree);
                     }
                     //move random
-                    else
-                    {
+                    else {
                         tryMove(randomDirection());
+                        moved = true;
                     }
                 }
 
                 if (line != null)
-                    rc.setIndicatorLine(line.begin,line.end,0,0,0);
+                    rc.setIndicatorLine(line.begin, line.end, 0, 0, 0);
 
-                if (currentTree != null)
-                {
+                if (currentTree != null) {
                     // chop into the tree if you can
-                    if (rc.canInteractWithTree(currentTree))
-                    {
+                    if (rc.canInteractWithTree(currentTree) && !attacked) {
                         System.out.println("Chopping up a tree");
                         rc.chop(currentTree);
                         // if tree died
-                        if (treeIsDead(currentTree))
-                        {
+                        if (treeIsDead(currentTree)) {
                             currentTree = null;
                             line = null;
                         }
-                    }
-                    else // move towards the tree
+                    } else // move towards the tree
                     {
                         System.out.println("Moving to a tree");
 
+                        if (!moved)
                         // try to reach current tree
-                        navigateTo(line);
+                            navigateTo(line);
                     }
                 }
 
@@ -721,14 +751,11 @@ public strictfp class RobotPlayer {
         }
     }
 
-    static boolean treeIsDead(MapLocation tree) throws GameActionException
-    {
+    static boolean treeIsDead(MapLocation tree) throws GameActionException {
         boolean result = false;
-        try
-        {
+        try {
             result = (rc.senseTreeAtLocation(tree) == null);
-        }
-        catch (Exception e) {
+        } catch (Exception e) {
             System.out.println("Tree Exception");
             e.printStackTrace();
         }
@@ -809,99 +836,98 @@ public strictfp class RobotPlayer {
     }
 
     static Direction lastDir;
-    static void navigateTo(mLine line) throws GameActionException
-    {
+
+    static void navigateTo(mLine line) throws GameActionException {
         if (line == null) return;
 
-        // calculate general form of the mline ax + by + c = 0
-        float a = -(line.end.y - line.begin.y); // direction in y coordinate
-        float b = line.end.x - line.begin.x; // direction in x coordinate
-        float c = -a * line.begin.x - b * line.begin.y;
+        try {
+            // calculate general form of the mline ax + by + c = 0
+            float a = -(line.end.y - line.begin.y); // direction in y coordinate
+            float b = line.end.x - line.begin.x; // direction in x coordinate
+            float c = -a * line.begin.x - b * line.begin.y;
 
-        // calculate our distance from the mline
-        float distance = (a * rc.getLocation().x + b * rc.getLocation().y + c)/(float)(Math.sqrt(a*a+b*b));
-        // follow the mline if we are on it and we can move in its direction
-        if (distance < rc.getType().bodyRadius / 2)
-        {
-            System.out.println("Im on the m-line");
-            if (rc.canMove(line.dir, rc.getType().strideRadius))
-            {
-                rc.move(line.dir, rc.getType().strideRadius);
+            // calculate our distance from the mline
+            float distance = (a * rc.getLocation().x + b * rc.getLocation().y + c) / (float) (Math.sqrt(a * a + b * b));
+            // follow the mline if we are on it and we can move in its direction
+            if (distance < rc.getType().bodyRadius / 2) {
+                System.out.println("Im on the m-line");
+                if (rc.canMove(line.dir, rc.getType().strideRadius)) {
+                    rc.move(line.dir, rc.getType().strideRadius);
+                    lastDir = line.dir;
+                    return;
+                }
+            }
+
+            System.out.println("cant follow m-line, following obstacle");
+
+            if (lastDir == null)
                 lastDir = line.dir;
-                return;
-            }
-        }
 
-        System.out.println("cant follow m-line, following obstacle");
-
-        if (lastDir == null)
-            lastDir = line.dir;
-
-        //hit an obstacle
-        if (!rc.canMove(lastDir))
-        {
-            for (int i = 0; i <= 180; i++)
-            {
-                Direction currentLeft = lastDir.rotateLeftDegrees(i);
-                if (rc.canMove(currentLeft))
-                {
-                    System.out.println("hit an obstacle, i go left");
-                    lastDir = currentLeft;
-                    rc.move(currentLeft);
-                    break;
-                }
-
-                Direction currentRight = lastDir.rotateRightDegrees(i);
-                if (rc.canMove(currentRight))
-                {
-                    System.out.println("hit an obstacle, i go right");
-                    lastDir = currentRight;
-                    rc.move(currentRight);
-                    break;
-                }
-            }
-        }
-        else
-        {
-            Direction leftChoice = lastDir;
-            Direction rightChoice = lastDir;
-
-            boolean leftFound = false;
-            boolean rightFound = false;
-
-            // could not follow the m-line, follow obstacle
-            for (int i = 0; i <= 180; i++)
-            {
-                if (!leftFound)
-                {
+            //hit an obstacle
+            if (!rc.canMove(lastDir)) {
+                for (int i = 0; i <= 180; i++) {
                     Direction currentLeft = lastDir.rotateLeftDegrees(i);
-                    if (rc.canMove(currentLeft))
-                        leftChoice = currentLeft;
-                    else
-                        leftFound = true;
-                }
+                    if (rc.canMove(currentLeft)) {
+                        System.out.println("hit an obstacle, i go left");
+                        lastDir = currentLeft;
+                        rc.move(currentLeft);
+                        break;
+                    }
 
-                if (!rightFound)
-                {
                     Direction currentRight = lastDir.rotateRightDegrees(i);
-                    if (rc.canMove(currentRight))
-                        rightChoice = currentRight;
-                    else
-                        rightFound = true;
+                    if (rc.canMove(currentRight)) {
+                        System.out.println("hit an obstacle, i go right");
+                        lastDir = currentRight;
+                        rc.move(currentRight);
+                        break;
+                    }
                 }
-                if (leftFound && rightFound) break;
-
             }
-            rc.setIndicatorLine(rc.getLocation(),rc.getLocation().add(leftChoice,3),255,0,0);
-            rc.setIndicatorLine(rc.getLocation(),rc.getLocation().add(rightChoice,3),0,0,255);
+            //no obstacle before me, follow obstacle
+            else {
+                Direction leftChoice = lastDir;
+                Direction rightChoice = lastDir;
 
-            //choose possibility and move that way
-            if (Math.abs(leftChoice.degreesBetween(lastDir)) < Math.abs(rightChoice.degreesBetween(lastDir)) && tryMove(leftChoice)) {
-                lastDir = leftChoice;
-            } else if (tryMove(rightChoice)) {
-                lastDir = rightChoice;
-            } else
-                tryMove(randomDirection());
+                boolean leftFound = false;
+                boolean rightFound = false;
+
+                //try find left/right most direction
+                for (int i = 0; i <= 180; i++) {
+                    if (!leftFound) {
+                        Direction currentLeft = lastDir.rotateLeftDegrees(i);
+                        if (rc.canMove(currentLeft))
+                            leftChoice = currentLeft;
+                        else
+                            leftFound = true;
+                    }
+
+                    if (!rightFound) {
+                        Direction currentRight = lastDir.rotateRightDegrees(i);
+                        if (rc.canMove(currentRight))
+                            rightChoice = currentRight;
+                        else
+                            rightFound = true;
+                    }
+                    if (leftFound && rightFound) break;
+
+                }
+
+                //debug possibilities
+                rc.setIndicatorLine(rc.getLocation(), rc.getLocation().add(leftChoice, 3), 255, 0, 0);
+                rc.setIndicatorLine(rc.getLocation(), rc.getLocation().add(rightChoice, 3), 0, 0, 255);
+
+                //choose possibility and move that way (smallest angle between choice and last direction
+                if (Math.abs(leftChoice.degreesBetween(lastDir)) < Math.abs(rightChoice.degreesBetween(lastDir)) && tryMove(leftChoice)) {
+                    lastDir = leftChoice;
+                } else if (tryMove(rightChoice)) {
+                    lastDir = rightChoice;
+                } else
+                    tryMove(randomDirection());
+            }
+        }
+        catch (Exception e) {
+            System.out.println("Navigate Exception");
+            e.printStackTrace();
         }
     }
 
